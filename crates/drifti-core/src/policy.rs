@@ -3,9 +3,9 @@
 
 //! Policy decisions, allow and deny rules, and evaluation results.
 //!
-//! A rule names one [`Capability`](crate::capability::Capability). An evaluation
-//! result records the decision and, when a rule matched, the evidence for it.
-//! Searching those rules, deny precedence, and coverage are later tasks.
+//! A rule names one [`Capability`](crate::capability::Capability). It matches
+//! another capability when the actions are equal and the rule resource contains
+//! the other resource. Deny precedence and coverage are later tasks.
 //! This module does not read YAML, traces, or a terminal.
 
 use std::error::Error;
@@ -137,6 +137,17 @@ impl Rule {
     pub fn capability(&self) -> &Capability {
         &self.capability
     }
+
+    /// Whether this rule covers `capability`.
+    ///
+    /// The actions must be equal. The rule resource must contain the capability
+    /// resource: an exact rule covers only itself, and a recursive prefix covers
+    /// that path and its descendants. Allow and deny use the same match.
+    #[must_use]
+    pub fn matches(&self, capability: &Capability) -> bool {
+        self.capability.action() == capability.action()
+            && self.capability.resource().contains(capability.resource())
+    }
 }
 
 /// Rules compiled into the form the policy engine consumes.
@@ -160,6 +171,18 @@ impl CompiledPolicy {
     #[must_use]
     pub fn rules(&self) -> &[Rule] {
         &self.rules
+    }
+
+    /// Rules that cover `capability`, in policy order.
+    ///
+    /// Deny precedence and coverage are not applied here.
+    #[must_use]
+    pub fn matching_rules(&self, capability: &Capability) -> Vec<MatchedRule> {
+        self.rules
+            .iter()
+            .filter(|rule| rule.matches(capability))
+            .map(MatchedRule::from_rule)
+            .collect()
     }
 }
 
@@ -333,7 +356,11 @@ mod tests {
         RuleEffect, RuleId,
     };
     use crate::capability::Capability;
-    use crate::resource::{FileResource, FilesystemAnchor};
+    use crate::resource::{
+        ExecutableResource, FileResource, FilesystemAnchor, NetworkAddress, NetworkProtocol,
+        NetworkResource,
+    };
+    use std::net::{IpAddr, Ipv4Addr};
 
     fn read_src() -> Capability {
         let resource = FileResource::new(FilesystemAnchor::Repo, "src/**").expect("file");
@@ -428,5 +455,142 @@ mod tests {
             Evaluation::denied(vec![allow]),
             Err(PolicyError::MismatchedEffect)
         );
+    }
+
+    fn repo_read(file_path: &str) -> Capability {
+        let resource = FileResource::new(FilesystemAnchor::Repo, file_path).expect("file");
+        Capability::filesystem_read(resource)
+    }
+
+    fn repo_write(file_path: &str) -> Capability {
+        let resource = FileResource::new(FilesystemAnchor::Repo, file_path).expect("file");
+        Capability::filesystem_write(resource)
+    }
+
+    #[test]
+    fn exact_and_recursive_rules_match_by_containment() {
+        let exact = Rule::allow(rule_id("exact"), repo_read("src/lib.rs"));
+        let prefix = Rule::deny(rule_id("prefix"), repo_read("src/**"));
+        let child = Rule::allow(rule_id("child"), repo_read("src/domain/**"));
+        let observed = repo_read("src/domain/mod.rs");
+
+        assert!(exact.matches(&repo_read("src/lib.rs")));
+        assert!(!exact.matches(&repo_read("src/main.rs")));
+        assert!(prefix.matches(&observed));
+        assert!(prefix.matches(&repo_read("src")));
+        assert!(child.matches(&observed));
+        assert!(!child.matches(&repo_read("src/**")));
+        assert!(!prefix.matches(&repo_read("srcdir/lib.rs")));
+        assert!(!repo_read_rule("src/**").matches(&repo_read_home("src/lib.rs")));
+
+        let policy = CompiledPolicy::new(vec![exact, prefix.clone(), child]);
+        let matched = policy.matching_rules(&observed);
+        assert_eq!(matched.len(), 2);
+        assert_eq!(matched[0].id().as_str(), "prefix");
+        assert_eq!(matched[0].effect(), RuleEffect::Deny);
+        assert_eq!(matched[1].id().as_str(), "child");
+        assert_eq!(matched[1].effect(), RuleEffect::Allow);
+        assert!(prefix.matches(&observed));
+        assert_eq!(
+            Rule::allow(rule_id("same"), repo_read("src/**")).matches(&observed),
+            prefix.matches(&observed)
+        );
+    }
+
+    fn repo_read_rule(file_path: &str) -> Rule {
+        Rule::deny(rule_id("anchor"), repo_read(file_path))
+    }
+
+    fn repo_read_home(file_path: &str) -> Capability {
+        let resource = FileResource::new(FilesystemAnchor::Home, file_path).expect("file");
+        Capability::filesystem_read(resource)
+    }
+
+    #[test]
+    fn action_and_resource_domain_mismatches_never_match() {
+        let read_rule = Rule::allow(rule_id("read"), repo_read("src/**"));
+        assert!(!read_rule.matches(&repo_write("src/lib.rs")));
+
+        let executable =
+            Capability::process_execute(ExecutableResource::new("git").expect("executable"));
+        let other_executable =
+            Capability::process_execute(ExecutableResource::new("git-lfs").expect("executable"));
+        let execute_rule = Rule::allow(rule_id("git"), executable.clone());
+        assert!(execute_rule.matches(&executable));
+        assert!(!execute_rule.matches(&other_executable));
+        assert!(!read_rule.matches(&executable));
+        assert!(!execute_rule.matches(&repo_read("git")));
+
+        let address = NetworkAddress::ip(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)));
+        let host =
+            Capability::network_connect(NetworkResource::new(NetworkProtocol::Tcp, address, 443));
+        let cidr = NetworkAddress::cidr(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0)), 8).expect("cidr");
+        let network =
+            Capability::network_connect(NetworkResource::new(NetworkProtocol::Tcp, cidr, 443));
+        let network_rule = Rule::deny(rule_id("net"), network.clone());
+        assert!(network_rule.matches(&network));
+        assert!(!network_rule.matches(&host));
+        assert!(!network_rule.matches(&executable));
+    }
+
+    #[test]
+    fn matching_follows_action_equality_and_resource_containment() {
+        use proptest::prelude::*;
+        use proptest::test_runner::{TestRng, TestRunner};
+
+        let config = ProptestConfig {
+            cases: 64,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        };
+        let algorithm = config.rng_algorithm;
+        let mut runner = TestRunner::new_with_rng(config, TestRng::deterministic_rng(algorithm));
+        let parts = proptest::collection::vec(
+            prop_oneof![Just("src"), Just("domain"), Just("lib.rs"), Just("a")],
+            0..=3,
+        );
+        let pattern = (parts, any::<bool>(), any::<bool>());
+        runner
+            .run(
+                &(pattern.clone(), pattern),
+                |(
+                    (rule_parts, rule_recursive, rule_read),
+                    (subject_parts, subject_recursive, subject_read),
+                )| {
+                    let rule_capability = generated_read(rule_read, &rule_parts, rule_recursive);
+                    let subject = generated_read(subject_read, &subject_parts, subject_recursive);
+                    let allow = Rule::allow(rule_id("allow"), rule_capability.clone());
+                    let deny = Rule::deny(rule_id("deny"), rule_capability.clone());
+                    let expected = rule_read == subject_read
+                        && rule_capability.resource().contains(subject.resource());
+                    prop_assert_eq!(allow.matches(&subject), expected);
+                    prop_assert_eq!(deny.matches(&subject), expected);
+                    Ok(())
+                },
+            )
+            .expect("matching");
+    }
+
+    fn generated_read(read: bool, parts: &[&str], recursive: bool) -> Capability {
+        let joined = if parts.is_empty() {
+            if recursive {
+                "**".to_owned()
+            } else {
+                ".".to_owned()
+            }
+        } else {
+            let body = parts.join("/");
+            if recursive {
+                format!("{body}/**")
+            } else {
+                body
+            }
+        };
+        let resource = FileResource::new(FilesystemAnchor::Repo, joined).expect("file");
+        if read {
+            Capability::filesystem_read(resource)
+        } else {
+            Capability::filesystem_write(resource)
+        }
     }
 }
