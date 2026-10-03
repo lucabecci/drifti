@@ -8,6 +8,7 @@
 //! command argument vector. `sequence` orders events inside one execution.
 //! [`MonotonicTimestamp`] is not an ordering key.
 
+use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
@@ -367,6 +368,39 @@ impl ObservedEvent {
     #[must_use]
     pub const fn evidence(&self) -> EvidenceMeta {
         self.evidence
+    }
+
+    /// Orders two events by `sequence` inside one execution.
+    ///
+    /// Returns `None` when `execution_id` differs. Does not read `timestamp`.
+    #[must_use]
+    pub fn sequence_cmp(&self, other: &Self) -> Option<Ordering> {
+        if self.execution_id != other.execution_id {
+            return None;
+        }
+        Some(self.sequence.cmp(&other.sequence))
+    }
+
+    /// Whether the operation succeeded.
+    ///
+    /// True only for [`Outcome::Success`]. A failure is not exercised.
+    #[must_use]
+    pub const fn was_exercised(&self) -> bool {
+        match self.outcome() {
+            Outcome::Success => true,
+            Outcome::Failure { .. } => false,
+        }
+    }
+
+    /// Whether the operation failed.
+    ///
+    /// True only for [`Outcome::Failure`]. Success is exercised, not attempted.
+    #[must_use]
+    pub const fn was_attempted(&self) -> bool {
+        match self.outcome() {
+            Outcome::Success => false,
+            Outcome::Failure { .. } => true,
+        }
     }
 }
 
