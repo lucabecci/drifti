@@ -1,0 +1,15 @@
+# <type>(<scope>): <description>
+#
+# type: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+#
+# Examples:
+#   feat: detect an unseen filesystem capability
+#   fix(contract): keep secret values out of traces
+#   docs: describe the contribution workflow
+#   feat!: change capability contract evaluation
+#
+# Body: explain why this change is needed. Wrap around 72 columns.
+#
+# Footer:
+#   BREAKING CHANGE: describe what breaks
+#   Refs: #0

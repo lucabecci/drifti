@@ -1,0 +1,52 @@
+#!/bin/sh
+# Conventional Commits 1.0.0 commit-msg hook.
+# https://www.conventionalcommits.org/en/v1.0.0/
+
+msg_file=${1:?commit message file required}
+
+subject=$(awk '
+  /^#/ { next }
+  /^[[:space:]]*$/ { next }
+  { print; exit }
+' "$msg_file")
+
+if [ -z "$subject" ]; then
+  echo "error: empty commit message" >&2
+  exit 1
+fi
+
+case "$subject" in
+  Merge\ *|fixup!\ *|squash!\ *|amend!\ *|Revert\ \"*)
+    exit 0
+    ;;
+esac
+
+types='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
+
+if printf '%s\n' "$subject" | grep -Eq "^(${types})(\\([a-z0-9][a-z0-9._/-]*\\))?(!)?: [^[:space:]].*[^.]$"; then
+  :
+else
+  cat >&2 <<EOF
+error: commit subject is not a Conventional Commit
+
+  got: ${subject}
+
+  expected: <type>[optional scope][optional !]: <description>
+
+  types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+  example: feat(contract): report capability drift
+
+The description is imperative and does not end with a period.
+Spec: https://www.conventionalcommits.org/en/v1.0.0/
+EOF
+  exit 1
+fi
+
+length=$(printf '%s' "$subject" | wc -m | tr -d '[:space:]')
+
+if [ "$length" -gt 100 ]; then
+  echo "error: commit subject is ${length} characters; keep it within 100" >&2
+  exit 1
+fi
+
+exit 0
