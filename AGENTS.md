@@ -2,7 +2,7 @@
 
 Instructions for coding agents working on Drifti.
 
-The operating workflow is the [Development Playbook](docs/development-playbook.md). Read it before SPEC-driven work. Project skills live in [`.agents/skills/`](.agents/skills/).
+The operating workflow is the [Development Playbook](docs/development-playbook.md). Read it before SPEC-driven work. Project skills live in [`.agents/skills/`](.agents/skills/). Normal implementation work starts from a Jira task labeled `ready` in project `KAN`.
 
 ## Project
 
@@ -24,6 +24,36 @@ Product behavior is defined in this order:
 A SPEC may refine implementation details but must not silently change an RFC decision. If implementation requires changing an architectural decision, surface the conflict instead of hiding the change in code.
 
 PRD, RFC, Design System, and SPEC text currently live in Confluence. Agents implement a SPEC; they do not invent product behavior.
+
+## Mandatory Jira task lifecycle
+
+Jira project `KAN` is the execution source of truth for Drifti development. Confluence remains the source of truth for product, architecture, and SPEC behavior. The full lifecycle is in the [Development Playbook](docs/development-playbook.md).
+
+For normal implementation work, always use Atlassian MCP.
+
+Before editing code:
+
+1. Take only a Jira task labeled `ready`.
+2. Confirm all blocking Jira dependencies are complete.
+3. Read the linked Confluence SPEC.
+4. Move the issue to **En progreso**.
+5. Comment that the task has been claimed.
+
+During and after implementation:
+
+- Keep Jira status aligned with actual work.
+- Comment implementation summary, tests, and acceptance criteria.
+- Move to **En revisión** + `phase-validation`.
+- Run `validate-spec`.
+- Then `phase-security-review`.
+- Then `phase-ready-to-merge`.
+- Move to **Completado** only after merge or accepted completion.
+
+When completing a task, inspect its blocked successors and promote newly unblocked work from `blocked` to `ready`.
+
+Do not report implementation work as complete until Jira has been updated.
+
+Exceptions require an explicit user instruction or a read-only investigation task. The lifecycle may also be skipped when the user explicitly says not to create or use Jira work, or when the work itself repairs the Jira or Atlassian integration.
 
 ## Architecture
 
@@ -78,9 +108,9 @@ Use the [`rust-systems`](.agents/skills/rust-systems/SKILL.md) skill when writin
 
 ## SPEC-driven changes
 
-Use [`implement-spec`](.agents/skills/implement-spec/SKILL.md) to implement one SPEC.
+Use [`implement-spec`](.agents/skills/implement-spec/SKILL.md) for the SPEC linked from the claimed Jira task. Do not choose an arbitrary SPEC as the entrypoint.
 
-1. Read the requested SPEC.
+1. Read the SPEC linked from the claimed task.
 2. Read only additional RFC or design context required by that SPEC.
 3. Implement the smallest coherent change satisfying it.
 4. Add automated tests for applicable acceptance criteria.
