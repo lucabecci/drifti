@@ -4,7 +4,9 @@
 //! Capability values.
 //!
 //! A capability pairs one MVP action with one resource of the matching family.
-//! Public constructors reject every other pairing.
+//! Identity is that pair after resource normalization. Execution id, PID,
+//! timestamp, and evidence are not part of it. Public constructors reject
+//! every other pairing.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -76,9 +78,10 @@ impl Action {
     }
 }
 
-/// One action paired with one compatible resource.
+/// One action paired with one compatible, normalized resource.
 ///
-/// Deserialization is a public constructor and uses [`Capability::try_new`].
+/// Equality and serde use only those two fields. Deserialization is a public
+/// constructor: it uses [`Capability::try_new`] and rejects execution metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Capability {
@@ -433,6 +436,64 @@ mod tests {
     }
 
     #[test]
+    fn identity_is_the_normalized_action_and_resource() {
+        let file = Capability::filesystem_read(
+            FileResource::new(FilesystemAnchor::Repo, "src/./lib.rs").expect("file"),
+        );
+        assert_eq!(
+            file,
+            Capability::filesystem_read(
+                FileResource::new(FilesystemAnchor::Repo, "src/lib.rs").expect("canonical")
+            )
+        );
+        let executable =
+            Capability::process_execute(ExecutableResource::new("./git").expect("exe"));
+        assert_eq!(
+            executable,
+            Capability::process_execute(ExecutableResource::new("git").expect("name"))
+        );
+        let supplied =
+            NetworkAddress::cidr(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)), 8).expect("cidr");
+        let network = NetworkAddress::cidr(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0)), 8).expect("net");
+        assert_eq!(
+            Capability::network_connect(NetworkResource::new(NetworkProtocol::Tcp, supplied, 443)),
+            Capability::network_connect(NetworkResource::new(NetworkProtocol::Tcp, network, 443))
+        );
+    }
+
+    #[test]
+    fn serialization_keeps_only_action_and_resource() {
+        let capability = Capability::filesystem_read(file());
+        let value = serde_json::to_value(&capability).expect("json");
+        let object = value.as_object().expect("object");
+        assert_eq!(object.len(), 2);
+        assert!(object.contains_key("action"));
+        assert!(object.contains_key("resource"));
+        for field in ["execution_id", "pid", "timestamp", "evidence"] {
+            let mut with_metadata = object.clone();
+            with_metadata.insert(field.to_owned(), serde_json::json!(1));
+            let rejected =
+                serde_json::from_value::<Capability>(serde_json::Value::Object(with_metadata));
+            assert!(rejected.is_err(), "{field}");
+        }
+    }
+
+    #[test]
+    fn canonical_values_round_trip() {
+        let json = r#"{"action":"filesystem.read","resource":{"file":{"anchor":"repo","file_path":"src/./lib.rs"}}}"#;
+        let parsed = serde_json::from_str::<Capability>(json).expect("parsed");
+        let canonical = Capability::filesystem_read(
+            FileResource::new(FilesystemAnchor::Repo, "src/lib.rs").expect("file"),
+        );
+        assert_eq!(parsed, canonical);
+        let encoded = serde_json::to_string(&parsed).expect("encoded");
+        assert_eq!(
+            serde_json::from_str::<Capability>(&encoded).expect("again"),
+            canonical
+        );
+    }
+
+    #[test]
     fn equality_is_reflexive_and_symmetric() {
         let mut runner = deterministic_runner();
         let strategy = (arb_capability(), arb_capability());
@@ -443,5 +504,18 @@ mod tests {
                 Ok(())
             })
             .expect("equality");
+    }
+
+    #[test]
+    fn round_trip_preserves_identity() {
+        let mut runner = deterministic_runner();
+        runner
+            .run(&arb_capability(), |capability| {
+                let encoded = serde_json::to_string(&capability).expect("encode");
+                let decoded = serde_json::from_str::<Capability>(&encoded).expect("decode");
+                prop_assert_eq!(decoded, capability);
+                Ok(())
+            })
+            .expect("round trip");
     }
 }

@@ -8,8 +8,8 @@
 //!
 //! [`capability`] and [`resource`] are the MVP action and resource model.
 //! Filesystem paths, executable identity, and network addresses are normalized.
-//! A trailing `**` is a recursive prefix for containment. The capability
-//! serialization contract is a later task.
+//! Capability identity is the action plus that normalized resource.
+//! A trailing `**` is a recursive prefix for containment.
 //! [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]
