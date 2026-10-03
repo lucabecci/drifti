@@ -12,7 +12,8 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Quality of observation for one execution or domain.
 ///
@@ -113,8 +114,7 @@ impl ObserverCapabilities {
 ///
 /// `status` is the caller's declaration. Unsupported domains stay in their
 /// own set so "cannot observe" is distinct from "no events were emitted".
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ExecutionCoverage {
     status: ObservationCoverage,
     unsupported_domains: BTreeSet<CapabilityDomain>,
@@ -140,10 +140,18 @@ impl ExecutionCoverage {
         })
     }
 
-    /// Raw declared status. This is not inferred from events.
+    /// Declared status. This is not inferred from events.
+    ///
+    /// A stored `COMPLETE` beside an unsupported domain is not reported as
+    /// `COMPLETE`. [`Self::is_complete`] rejects that pair, and copying this
+    /// status into policy coverage must not turn it into a successful result.
     #[must_use]
-    pub const fn status(&self) -> ObservationCoverage {
-        self.status
+    pub fn status(&self) -> ObservationCoverage {
+        if self.status.is_complete() && !self.unsupported_domains.is_empty() {
+            ObservationCoverage::Incomplete
+        } else {
+            self.status
+        }
     }
 
     /// Domains the backend marked unsupported for this execution.
@@ -177,3 +185,38 @@ impl Display for CoverageError {
 }
 
 impl Error for CoverageError {}
+
+impl<'de> Deserialize<'de> for ExecutionCoverage {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RawExecutionCoverage {
+            status: ObservationCoverage,
+            unsupported_domains: BTreeSet<CapabilityDomain>,
+        }
+
+        let raw = RawExecutionCoverage::deserialize(deserializer)?;
+        Self::declared(raw.status, raw.unsupported_domains).map_err(D::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::{CapabilityDomain, ExecutionCoverage, ObservationCoverage};
+
+    #[test]
+    fn status_does_not_report_complete_when_is_complete_rejects_it() {
+        let illegal = ExecutionCoverage {
+            status: ObservationCoverage::Complete,
+            unsupported_domains: BTreeSet::from([CapabilityDomain::Network]),
+        };
+        assert!(!illegal.is_complete());
+        assert_eq!(illegal.status(), ObservationCoverage::Incomplete);
+        assert_ne!(illegal.status(), ObservationCoverage::Complete);
+    }
+}

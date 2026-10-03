@@ -126,15 +126,24 @@ impl ExecutionResult {
 
 /// Platform-neutral observer.
 ///
-/// `run` takes ownership of an [`EventSink`] for the duration of the launch.
-/// The caller keeps the [`crate::EventCursor`] from [`EventSink::bounded`].
-/// A sink failure is an [`Err`], not a successful result.
+/// `run` takes the [`EventSink`] by value and returns that same sink with the
+/// result. The caller does not need to clone the sink. Events already accepted
+/// stay reachable on the returned sink after the cursor is dropped, and on the
+/// cursor while it is still alive. A rejected event stays inside
+/// [`ObserverError::Sink`]. A sink failure is an [`Err`], not a successful result.
 pub trait Observer {
     /// Domains this backend can observe.
     fn capabilities(&self) -> crate::ObserverCapabilities;
 
     /// Launches `command`, emits semantic events into `sink`, and returns coverage.
-    fn run(&self, command: CommandSpec, sink: EventSink) -> Result<ExecutionResult, ObserverError>;
+    ///
+    /// The sink is returned on both `Ok` and `Err`. Dropping it is the caller's
+    /// choice after they have taken any accepted events the cursor did not pull.
+    fn run(
+        &self,
+        command: CommandSpec,
+        sink: EventSink,
+    ) -> (EventSink, Result<ExecutionResult, ObserverError>);
 }
 
 /// Failure before or during a run. Success is not implied by any variant.
