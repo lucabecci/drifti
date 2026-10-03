@@ -7,3 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
 
 ## [Unreleased]
+
+### Added
+
+- Development Playbook for SPEC-driven agent work, with project skills for implementation, Rust conventions, spec validation, and security review.
