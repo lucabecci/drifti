@@ -3,11 +3,16 @@
 
 //! Version-1 Capability Contract document.
 //!
-//! This is the public shape of `drifti.yaml` before parsing or compilation.
-//! Keys are lowercase and follow the Design System: `version`, then
-//! `filesystem`, `process`, and `network`. Each action has `allow` and `deny`
-//! lists of authoring resources. Version 1 is mandatory. This module does not
-//! parse a file, sort resources, resolve anchors, or build a policy.
+//! This is the public shape of `drifti.yaml`. Keys are lowercase and follow
+//! the Design System: `version`, then `filesystem`, `process`, and `network`.
+//! Each action has `allow` and `deny` lists of authoring resources. Version 1
+//! is mandatory. [`parse_contract`] reads one document into this model and
+//! rejects every other version. It does not sort resources, resolve patterns
+//! into typed resources, or build a policy.
+
+mod parse;
+
+pub use parse::{parse_contract, ContractParseError, SourceLocation};
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};

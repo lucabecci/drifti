@@ -11,6 +11,7 @@ repository.workspace = true
 
 # Domain dependencies only. Linux, SQLite, and CLI crates do not belong here.
 [dependencies]
+saphyr-parser = "0.0.8"
 serde = { version = "1.0.217", features = ["derive"] }
 
 [dev-dependencies]

@@ -43,7 +43,7 @@ const FORBIDDEN_DEPENDENCIES: &[&str] = &[
     "sqlx",
 ];
 
-const ALLOWED_DEPENDENCIES: &[&str] = &["serde"];
+const ALLOWED_DEPENDENCIES: &[&str] = &["saphyr-parser", "serde"];
 const ALLOWED_DEV_DEPENDENCIES: &[&str] = &["proptest", "serde_json"];
 
 const LICENSE_HEADER: &str = "\
@@ -859,7 +859,7 @@ fn dependencies_stay_inside_the_domain_boundary() {
     let direct = direct_lock_deps(&lockfile, "drifti-core").expect("drifti-core lock entry");
     assert_eq!(
         direct.iter().map(String::as_str).collect::<Vec<_>>(),
-        vec!["proptest", "serde", "serde_json"]
+        vec!["proptest", "saphyr-parser", "serde", "serde_json"]
     );
 
     for name in deps
