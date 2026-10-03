@@ -37,7 +37,7 @@ Before editing code:
 2. Confirm all blocking Jira dependencies are complete.
 3. Read the linked Confluence SPEC.
 4. Move the issue to **En progreso**.
-5. Comment that the task has been claimed.
+5. Create the task branch, then comment the branch name and worktree path. See [Mandatory branch and worktree lifecycle](#mandatory-branch-and-worktree-lifecycle).
 
 During and after implementation:
 
@@ -54,6 +54,34 @@ When completing a task, inspect its blocked successors and promote newly unblock
 Do not report implementation work as complete until Jira has been updated.
 
 Exceptions require an explicit user instruction or a read-only investigation task. The lifecycle may also be skipped when the user explicitly says not to create or use Jira work, or when the work itself repairs the Jira or Atlassian integration.
+
+## Mandatory branch and worktree lifecycle
+
+Every Jira implementation task must use its own branch. The full convention is in the [Development Playbook](docs/development-playbook.md).
+
+Before changing code:
+
+1. Claim a `ready` task from Jira project `KAN`.
+2. Move it to **En progreso**.
+3. Create a branch using `<type>/<JIRA-KEY>-<short-title-kebab-case>`.
+4. Comment the branch name in Jira.
+5. If parallel work is used, create a dedicated worktree and comment its path.
+
+Allowed branch types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`, `ci`.
+
+Examples:
+
+- `chore/KAN-11-bootstrap-drifti-core`
+- `feat/KAN-12-capability-resource-model`
+- `fix/KAN-42-path-normalization-symlink`
+
+The Jira key is uppercase. The short title is kebab-case. Do not use spaces, underscores, or a personal prefix.
+
+Never do normal implementation work directly on `main`. Never reuse a task branch for another Jira task. One Jira task maps to one branch and one focused pull request whenever practical. Every pull request must reference the Jira key and must not include unrelated future tasks.
+
+For parallel work, use one dedicated worktree per task and branch. Name it `../drifti-kan-<number>`. Do not run multiple implementation agents against the same working tree or branch.
+
+After merge or accepted completion, update Jira, move the issue to **Completado**, promote newly unblocked successors from `blocked` to `ready`, and leave the merged branch unused. Do not report implementation complete until Jira reflects the final phase and result.
 
 ## Architecture
 
