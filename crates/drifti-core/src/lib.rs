@@ -11,8 +11,8 @@
 //! Capability identity is the action plus that normalized resource.
 //! A trailing `**` is a recursive prefix for containment.
 //! [`policy`] names `ALLOWED`, `DENIED`, `UNKNOWN`, and `INDETERMINATE`,
-//! and matches a rule when its resource contains the capability. Deny
-//! precedence and coverage checks are later tasks.
+//! matches a rule when its resource contains the capability, and evaluates
+//! with deny-over-allow precedence. Coverage checks are a later task.
 //! [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]

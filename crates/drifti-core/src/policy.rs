@@ -5,8 +5,8 @@
 //!
 //! A rule names one [`Capability`](crate::capability::Capability). It matches
 //! another capability when the actions are equal and the rule resource contains
-//! the other resource. Deny precedence and coverage are later tasks.
-//! This module does not read YAML, traces, or a terminal.
+//! the other resource. Evaluation applies `DENY` over `ALLOW` over `UNKNOWN`.
+//! Coverage is a later task. This module does not read YAML, traces, or a terminal.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -175,7 +175,7 @@ impl CompiledPolicy {
 
     /// Rules that cover `capability`, in policy order.
     ///
-    /// Deny precedence and coverage are not applied here.
+    /// This list does not apply deny precedence or coverage.
     #[must_use]
     pub fn matching_rules(&self, capability: &Capability) -> Vec<MatchedRule> {
         self.rules
@@ -184,6 +184,38 @@ impl CompiledPolicy {
             .map(MatchedRule::from_rule)
             .collect()
     }
+
+    /// Evaluates `capability` with deterministic precedence `DENY > ALLOW > UNKNOWN`.
+    ///
+    /// Any matching deny produces [`Decision::Denied`] and cites every matching
+    /// deny rule, in policy order. Allow rules that also match are omitted.
+    /// When no deny matches, matching allow rules produce [`Decision::Allowed`].
+    /// When nothing matches, the result is [`Decision::Unknown`] with
+    /// [`EvaluationReason::NoMatchingRule`]. The same inputs always produce the
+    /// same result. Coverage is not consulted and is never inferred.
+    #[must_use]
+    pub fn evaluate(&self, capability: &Capability) -> Evaluation {
+        let (allows, denies) = partition_effects(self.matching_rules(capability));
+        if !denies.is_empty() {
+            return Evaluation::denied(denies).expect("matching deny rules agree with DENIED");
+        }
+        if !allows.is_empty() {
+            return Evaluation::allowed(allows).expect("matching allow rules agree with ALLOWED");
+        }
+        Evaluation::unknown()
+    }
+}
+
+fn partition_effects(matched: Vec<MatchedRule>) -> (Vec<MatchedRule>, Vec<MatchedRule>) {
+    let mut allows = Vec::new();
+    let mut denies = Vec::new();
+    for rule in matched {
+        match rule.effect() {
+            RuleEffect::Allow => allows.push(rule),
+            RuleEffect::Deny => denies.push(rule),
+        }
+    }
+    (allows, denies)
 }
 
 /// A rule cited as evidence for a decision.
@@ -534,6 +566,119 @@ mod tests {
     }
 
     #[test]
+    fn exact_and_prefix_allows_are_allowed_when_no_deny_matches() {
+        let exact = Rule::allow(rule_id("exact"), repo_read("src/lib.rs"));
+        let prefix = Rule::allow(rule_id("prefix"), repo_read("src/**"));
+        let policy = CompiledPolicy::new(vec![exact, prefix]);
+        let evaluation = policy.evaluate(&repo_read("src/lib.rs"));
+        assert_eq!(evaluation.decision(), Decision::Allowed);
+        assert_eq!(evaluation.reason(), None);
+        let ids: Vec<_> = evaluation
+            .matched_rules()
+            .iter()
+            .map(|rule| rule.id().as_str())
+            .collect();
+        assert_eq!(ids, ["exact", "prefix"]);
+        assert!(evaluation
+            .matched_rules()
+            .iter()
+            .all(|rule| rule.effect() == RuleEffect::Allow));
+
+        let prefix_only = policy.evaluate(&repo_read("src/main.rs"));
+        assert_eq!(prefix_only.decision(), Decision::Allowed);
+        assert_eq!(prefix_only.matched_rules().len(), 1);
+        assert_eq!(prefix_only.matched_rules()[0].id().as_str(), "prefix");
+    }
+
+    #[test]
+    fn explicit_deny_wins_over_a_broader_allow() {
+        let allow = Rule::allow(rule_id("allow-src"), repo_read("src/**"));
+        let deny = Rule::deny(rule_id("deny-secret"), repo_read("src/secret.env"));
+        let observed = repo_read("src/secret.env");
+
+        for rules in [
+            vec![allow.clone(), deny.clone()],
+            vec![deny.clone(), allow.clone()],
+        ] {
+            let evaluation = CompiledPolicy::new(rules).evaluate(&observed);
+            assert_eq!(evaluation.decision(), Decision::Denied);
+            assert_eq!(evaluation.reason(), None);
+            assert_eq!(evaluation.matched_rules().len(), 1);
+            assert_eq!(evaluation.matched_rules()[0].id().as_str(), "deny-secret");
+            assert_eq!(evaluation.matched_rules()[0].effect(), RuleEffect::Deny);
+            assert_ne!(evaluation.decision(), Decision::Unknown);
+            assert_ne!(evaluation.decision(), Decision::Allowed);
+        }
+
+        let sibling = CompiledPolicy::new(vec![allow, deny]).evaluate(&repo_read("src/lib.rs"));
+        assert_eq!(sibling.decision(), Decision::Allowed);
+        assert_eq!(sibling.matched_rules()[0].id().as_str(), "allow-src");
+    }
+
+    #[test]
+    fn broader_deny_wins_over_a_narrower_allow() {
+        let deny = Rule::deny(rule_id("deny-src"), repo_read("src/**"));
+        let allow = Rule::allow(rule_id("allow-domain"), repo_read("src/domain/**"));
+        let evaluation =
+            CompiledPolicy::new(vec![allow, deny]).evaluate(&repo_read("src/domain/mod.rs"));
+        assert_eq!(evaluation.decision(), Decision::Denied);
+        assert_eq!(evaluation.matched_rules().len(), 1);
+        assert_eq!(evaluation.matched_rules()[0].id().as_str(), "deny-src");
+    }
+
+    #[test]
+    fn denied_evidence_keeps_policy_order_and_drops_allows() {
+        let first = Rule::deny(rule_id("deny-tree"), repo_read("src/**"));
+        let allow = Rule::allow(rule_id("allow-all"), repo_read("**"));
+        let second = Rule::deny(rule_id("deny-file"), repo_read("src/lib.rs"));
+        let evaluation =
+            CompiledPolicy::new(vec![first, allow, second]).evaluate(&repo_read("src/lib.rs"));
+        let ids: Vec<_> = evaluation
+            .matched_rules()
+            .iter()
+            .map(|rule| rule.id().as_str())
+            .collect();
+        assert_eq!(evaluation.decision(), Decision::Denied);
+        assert_eq!(ids, ["deny-tree", "deny-file"]);
+        assert!(evaluation
+            .matched_rules()
+            .iter()
+            .all(|rule| rule.effect() == RuleEffect::Deny));
+    }
+
+    #[test]
+    fn no_match_is_unknown_and_distinct_from_denied() {
+        let policy = CompiledPolicy::new(vec![
+            Rule::allow(rule_id("allow-src"), repo_read("src/**")),
+            Rule::deny(rule_id("deny-tmp"), repo_read("tmp/**")),
+        ]);
+        let missing = policy.evaluate(&repo_read("docs/readme.md"));
+        assert_eq!(missing, Evaluation::unknown());
+        assert_eq!(missing.decision(), Decision::Unknown);
+        assert_eq!(missing.reason(), Some(EvaluationReason::NoMatchingRule));
+        assert!(missing.matched_rules().is_empty());
+        assert_ne!(missing.decision(), Decision::Denied);
+        assert_ne!(
+            missing.reason(),
+            Some(EvaluationReason::InsufficientCoverage)
+        );
+
+        let empty = CompiledPolicy::new(Vec::new()).evaluate(&repo_read("src/lib.rs"));
+        assert_eq!(empty, Evaluation::unknown());
+        assert_ne!(empty.decision(), Decision::Denied);
+
+        let read_rule = Rule::allow(rule_id("read"), repo_read("src/**"));
+        let action_mismatch =
+            CompiledPolicy::new(vec![read_rule.clone()]).evaluate(&repo_write("src/lib.rs"));
+        assert_eq!(action_mismatch, Evaluation::unknown());
+
+        let home = repo_read_home("src/lib.rs");
+        let domain_mismatch = CompiledPolicy::new(vec![read_rule]).evaluate(&home);
+        assert_eq!(domain_mismatch, Evaluation::unknown());
+        assert_ne!(domain_mismatch.decision(), Decision::Denied);
+    }
+
+    #[test]
     fn matching_follows_action_equality_and_resource_containment() {
         use proptest::prelude::*;
         use proptest::test_runner::{TestRng, TestRunner};
@@ -592,5 +737,91 @@ mod tests {
         } else {
             Capability::filesystem_write(resource)
         }
+    }
+
+    #[test]
+    fn deny_precedence_holds_for_generated_rules() {
+        use proptest::prelude::*;
+        use proptest::test_runner::{TestRng, TestRunner};
+
+        let config = ProptestConfig {
+            cases: 64,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        };
+        let algorithm = config.rng_algorithm;
+        let mut runner = TestRunner::new_with_rng(config, TestRng::deterministic_rng(algorithm));
+        let parts = proptest::collection::vec(
+            prop_oneof![Just("src"), Just("domain"), Just("lib.rs"), Just("a")],
+            0..=3,
+        );
+        let rule = (any::<bool>(), parts.clone(), any::<bool>(), any::<bool>());
+        let strategy = (
+            proptest::collection::vec(rule, 0..=5),
+            (parts, any::<bool>(), any::<bool>()),
+        );
+        runner
+            .run(
+                &strategy,
+                |(rules, (subject_parts, subject_recursive, subject_read))| {
+                    let subject = generated_read(subject_read, &subject_parts, subject_recursive);
+                    let compiled: Vec<Rule> = rules
+                        .iter()
+                        .enumerate()
+                        .map(|(index, (deny, rule_parts, recursive, read))| {
+                            let capability = generated_read(*read, rule_parts, *recursive);
+                            let id = rule_id(&format!("rule-{index}"));
+                            if *deny {
+                                Rule::deny(id, capability)
+                            } else {
+                                Rule::allow(id, capability)
+                            }
+                        })
+                        .collect();
+                    let policy = CompiledPolicy::new(compiled.clone());
+                    let evaluation = policy.evaluate(&subject);
+                    prop_assert_eq!(&evaluation, &policy.evaluate(&subject));
+
+                    let denies: Vec<_> = compiled
+                        .iter()
+                        .filter(|rule| rule.effect() == RuleEffect::Deny && rule.matches(&subject))
+                        .map(MatchedRule::from_rule)
+                        .collect();
+                    let allows: Vec<_> = compiled
+                        .iter()
+                        .filter(|rule| rule.effect() == RuleEffect::Allow && rule.matches(&subject))
+                        .map(MatchedRule::from_rule)
+                        .collect();
+                    if !denies.is_empty() {
+                        prop_assert_eq!(evaluation.decision(), Decision::Denied);
+                        prop_assert_eq!(evaluation.matched_rules(), denies.as_slice());
+                        prop_assert_eq!(evaluation.reason(), None);
+                        prop_assert!(evaluation
+                            .matched_rules()
+                            .iter()
+                            .all(|rule| rule.effect() == RuleEffect::Deny));
+                    } else if !allows.is_empty() {
+                        prop_assert_eq!(evaluation.decision(), Decision::Allowed);
+                        prop_assert_eq!(evaluation.matched_rules(), allows.as_slice());
+                        prop_assert_eq!(evaluation.reason(), None);
+                    } else {
+                        prop_assert_eq!(&evaluation, &Evaluation::unknown());
+                        prop_assert_ne!(evaluation.decision(), Decision::Denied);
+                        prop_assert_eq!(
+                            evaluation.reason(),
+                            Some(EvaluationReason::NoMatchingRule)
+                        );
+                    }
+
+                    let reversed =
+                        CompiledPolicy::new(compiled.into_iter().rev().collect::<Vec<_>>());
+                    prop_assert_eq!(
+                        reversed.evaluate(&subject).decision(),
+                        evaluation.decision()
+                    );
+                    Ok(())
+                },
+            )
+            .expect("deny precedence");
     }
 }

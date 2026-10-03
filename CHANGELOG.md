@@ -10,6 +10,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
+- Deterministic policy evaluation with deny-over-allow precedence in `drifti-core`.
 - Exact and recursive-prefix policy rule matching in `drifti-core`.
 - SPEC-001 property suite for normalization, equality, containment, serialization, and cross-resource rejection in `drifti-core`.
 - Policy decisions, allow and deny rules, and evaluation results in `drifti-core`.
