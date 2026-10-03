@@ -5,8 +5,10 @@
 //!
 //! A rule names one [`Capability`](crate::capability::Capability). It matches
 //! another capability when the actions are equal and the rule resource contains
-//! the other resource. Evaluation applies `DENY` over `ALLOW` over `UNKNOWN`.
-//! Coverage is a later task. This module does not read YAML, traces, or a terminal.
+//! the other resource. Evaluation applies `DENY` over `ALLOW` over `UNKNOWN`
+//! when the caller supplies [`Coverage::Complete`]. Any other coverage yields
+//! `INDETERMINATE` unless an explicit deny matches. The engine never infers
+//! `COMPLETE`. This module does not read YAML, traces, or a terminal.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -44,6 +46,41 @@ impl Decision {
             Self::Unknown => "UNKNOWN",
             Self::Indeterminate => "INDETERMINATE",
         }
+    }
+}
+
+/// Observation coverage supplied with a capability.
+///
+/// The engine does not choose this value. [`Coverage::Complete`] is used only
+/// when the caller passes it. There is no default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Coverage {
+    /// The observer declared complete coverage for this evaluation.
+    Complete,
+    /// The observer declared incomplete coverage.
+    Incomplete,
+    /// The observer declared an unsupported observation path.
+    Unsupported,
+}
+
+impl Coverage {
+    /// Every coverage status from RFC-001.
+    pub const ALL: [Self; 3] = [Self::Complete, Self::Incomplete, Self::Unsupported];
+
+    /// Stable coverage name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Complete => "COMPLETE",
+            Self::Incomplete => "INCOMPLETE",
+            Self::Unsupported => "UNSUPPORTED",
+        }
+    }
+
+    /// Whether the caller declared [`Coverage::Complete`].
+    #[must_use]
+    pub const fn is_complete(self) -> bool {
+        matches!(self, Self::Complete)
     }
 }
 
@@ -185,19 +222,35 @@ impl CompiledPolicy {
             .collect()
     }
 
-    /// Evaluates `capability` with deterministic precedence `DENY > ALLOW > UNKNOWN`.
+    /// Evaluates `capability` under explicit `coverage`.
+    ///
+    /// Precedence for a reliable evaluation is `DENY > ALLOW > UNKNOWN`.
+    /// `coverage` is an input. This method never substitutes
+    /// [`Coverage::Complete`].
     ///
     /// Any matching deny produces [`Decision::Denied`] and cites every matching
-    /// deny rule, in policy order. Allow rules that also match are omitted.
-    /// When no deny matches, matching allow rules produce [`Decision::Allowed`].
-    /// When nothing matches, the result is [`Decision::Unknown`] with
-    /// [`EvaluationReason::NoMatchingRule`]. The same inputs always produce the
-    /// same result. Coverage is not consulted and is never inferred.
+    /// deny rule, in policy order, including when coverage is incomplete.
+    /// Allow rules that also match are omitted. An explicit deny stays a
+    /// reliable contract match.
+    ///
+    /// When no deny matches and coverage is [`Coverage::Incomplete`] or
+    /// [`Coverage::Unsupported`], the result is [`Decision::Indeterminate`]
+    /// with [`EvaluationReason::InsufficientCoverage`]. That result cites no
+    /// rule and is never [`Decision::Allowed`].
+    ///
+    /// When coverage is [`Coverage::Complete`] and no deny matches, matching
+    /// allow rules produce [`Decision::Allowed`]. When nothing matches, the
+    /// result is [`Decision::Unknown`] with
+    /// [`EvaluationReason::NoMatchingRule`]. The same inputs always produce
+    /// the same result.
     #[must_use]
-    pub fn evaluate(&self, capability: &Capability) -> Evaluation {
+    pub fn evaluate(&self, capability: &Capability, coverage: Coverage) -> Evaluation {
         let (allows, denies) = partition_effects(self.matching_rules(capability));
         if !denies.is_empty() {
             return Evaluation::denied(denies).expect("matching deny rules agree with DENIED");
+        }
+        if !coverage.is_complete() {
+            return Evaluation::indeterminate();
         }
         if !allows.is_empty() {
             return Evaluation::allowed(allows).expect("matching allow rules agree with ALLOWED");
@@ -302,8 +355,9 @@ impl Evaluation {
 
     /// `INDETERMINATE` because coverage was incomplete.
     ///
-    /// This constructor does not inspect observation data. The caller supplies
-    /// the conclusion that coverage was insufficient.
+    /// This constructor does not inspect observation data.
+    /// [`CompiledPolicy::evaluate`] returns it when the caller passes coverage
+    /// other than [`Coverage::Complete`] and no deny rule matches.
     #[must_use]
     pub fn indeterminate() -> Self {
         Self {
@@ -384,8 +438,8 @@ fn checked(
 #[cfg(test)]
 mod tests {
     use super::{
-        CompiledPolicy, Decision, Evaluation, EvaluationReason, MatchedRule, PolicyError, Rule,
-        RuleEffect, RuleId,
+        CompiledPolicy, Coverage, Decision, Evaluation, EvaluationReason, MatchedRule, PolicyError,
+        Rule, RuleEffect, RuleId,
     };
     use crate::capability::Capability;
     use crate::resource::{
@@ -393,6 +447,12 @@ mod tests {
         NetworkResource,
     };
     use std::net::{IpAddr, Ipv4Addr};
+
+    impl CompiledPolicy {
+        fn evaluate_complete(&self, capability: &Capability) -> Evaluation {
+            self.evaluate(capability, Coverage::Complete)
+        }
+    }
 
     fn read_src() -> Capability {
         let resource = FileResource::new(FilesystemAnchor::Repo, "src/**").expect("file");
@@ -570,7 +630,7 @@ mod tests {
         let exact = Rule::allow(rule_id("exact"), repo_read("src/lib.rs"));
         let prefix = Rule::allow(rule_id("prefix"), repo_read("src/**"));
         let policy = CompiledPolicy::new(vec![exact, prefix]);
-        let evaluation = policy.evaluate(&repo_read("src/lib.rs"));
+        let evaluation = policy.evaluate_complete(&repo_read("src/lib.rs"));
         assert_eq!(evaluation.decision(), Decision::Allowed);
         assert_eq!(evaluation.reason(), None);
         let ids: Vec<_> = evaluation
@@ -584,7 +644,7 @@ mod tests {
             .iter()
             .all(|rule| rule.effect() == RuleEffect::Allow));
 
-        let prefix_only = policy.evaluate(&repo_read("src/main.rs"));
+        let prefix_only = policy.evaluate_complete(&repo_read("src/main.rs"));
         assert_eq!(prefix_only.decision(), Decision::Allowed);
         assert_eq!(prefix_only.matched_rules().len(), 1);
         assert_eq!(prefix_only.matched_rules()[0].id().as_str(), "prefix");
@@ -600,7 +660,7 @@ mod tests {
             vec![allow.clone(), deny.clone()],
             vec![deny.clone(), allow.clone()],
         ] {
-            let evaluation = CompiledPolicy::new(rules).evaluate(&observed);
+            let evaluation = CompiledPolicy::new(rules).evaluate_complete(&observed);
             assert_eq!(evaluation.decision(), Decision::Denied);
             assert_eq!(evaluation.reason(), None);
             assert_eq!(evaluation.matched_rules().len(), 1);
@@ -610,7 +670,8 @@ mod tests {
             assert_ne!(evaluation.decision(), Decision::Allowed);
         }
 
-        let sibling = CompiledPolicy::new(vec![allow, deny]).evaluate(&repo_read("src/lib.rs"));
+        let sibling =
+            CompiledPolicy::new(vec![allow, deny]).evaluate_complete(&repo_read("src/lib.rs"));
         assert_eq!(sibling.decision(), Decision::Allowed);
         assert_eq!(sibling.matched_rules()[0].id().as_str(), "allow-src");
     }
@@ -619,8 +680,8 @@ mod tests {
     fn broader_deny_wins_over_a_narrower_allow() {
         let deny = Rule::deny(rule_id("deny-src"), repo_read("src/**"));
         let allow = Rule::allow(rule_id("allow-domain"), repo_read("src/domain/**"));
-        let evaluation =
-            CompiledPolicy::new(vec![allow, deny]).evaluate(&repo_read("src/domain/mod.rs"));
+        let evaluation = CompiledPolicy::new(vec![allow, deny])
+            .evaluate_complete(&repo_read("src/domain/mod.rs"));
         assert_eq!(evaluation.decision(), Decision::Denied);
         assert_eq!(evaluation.matched_rules().len(), 1);
         assert_eq!(evaluation.matched_rules()[0].id().as_str(), "deny-src");
@@ -631,8 +692,8 @@ mod tests {
         let first = Rule::deny(rule_id("deny-tree"), repo_read("src/**"));
         let allow = Rule::allow(rule_id("allow-all"), repo_read("**"));
         let second = Rule::deny(rule_id("deny-file"), repo_read("src/lib.rs"));
-        let evaluation =
-            CompiledPolicy::new(vec![first, allow, second]).evaluate(&repo_read("src/lib.rs"));
+        let evaluation = CompiledPolicy::new(vec![first, allow, second])
+            .evaluate_complete(&repo_read("src/lib.rs"));
         let ids: Vec<_> = evaluation
             .matched_rules()
             .iter()
@@ -652,7 +713,7 @@ mod tests {
             Rule::allow(rule_id("allow-src"), repo_read("src/**")),
             Rule::deny(rule_id("deny-tmp"), repo_read("tmp/**")),
         ]);
-        let missing = policy.evaluate(&repo_read("docs/readme.md"));
+        let missing = policy.evaluate_complete(&repo_read("docs/readme.md"));
         assert_eq!(missing, Evaluation::unknown());
         assert_eq!(missing.decision(), Decision::Unknown);
         assert_eq!(missing.reason(), Some(EvaluationReason::NoMatchingRule));
@@ -663,17 +724,17 @@ mod tests {
             Some(EvaluationReason::InsufficientCoverage)
         );
 
-        let empty = CompiledPolicy::new(Vec::new()).evaluate(&repo_read("src/lib.rs"));
+        let empty = CompiledPolicy::new(Vec::new()).evaluate_complete(&repo_read("src/lib.rs"));
         assert_eq!(empty, Evaluation::unknown());
         assert_ne!(empty.decision(), Decision::Denied);
 
         let read_rule = Rule::allow(rule_id("read"), repo_read("src/**"));
-        let action_mismatch =
-            CompiledPolicy::new(vec![read_rule.clone()]).evaluate(&repo_write("src/lib.rs"));
+        let action_mismatch = CompiledPolicy::new(vec![read_rule.clone()])
+            .evaluate_complete(&repo_write("src/lib.rs"));
         assert_eq!(action_mismatch, Evaluation::unknown());
 
         let home = repo_read_home("src/lib.rs");
-        let domain_mismatch = CompiledPolicy::new(vec![read_rule]).evaluate(&home);
+        let domain_mismatch = CompiledPolicy::new(vec![read_rule]).evaluate_complete(&home);
         assert_eq!(domain_mismatch, Evaluation::unknown());
         assert_ne!(domain_mismatch.decision(), Decision::Denied);
     }
@@ -779,8 +840,8 @@ mod tests {
                         })
                         .collect();
                     let policy = CompiledPolicy::new(compiled.clone());
-                    let evaluation = policy.evaluate(&subject);
-                    prop_assert_eq!(&evaluation, &policy.evaluate(&subject));
+                    let evaluation = policy.evaluate_complete(&subject);
+                    prop_assert_eq!(&evaluation, &policy.evaluate_complete(&subject));
 
                     let denies: Vec<_> = compiled
                         .iter()
@@ -816,12 +877,153 @@ mod tests {
                     let reversed =
                         CompiledPolicy::new(compiled.into_iter().rev().collect::<Vec<_>>());
                     prop_assert_eq!(
-                        reversed.evaluate(&subject).decision(),
+                        reversed.evaluate_complete(&subject).decision(),
                         evaluation.decision()
                     );
                     Ok(())
                 },
             )
             .expect("deny precedence");
+    }
+
+    #[test]
+    fn coverage_statuses_are_explicit_and_only_complete_is_complete() {
+        let names: Vec<_> = Coverage::ALL
+            .iter()
+            .copied()
+            .map(Coverage::as_str)
+            .collect();
+        assert_eq!(names, ["COMPLETE", "INCOMPLETE", "UNSUPPORTED"]);
+        assert!(Coverage::Complete.is_complete());
+        assert!(!Coverage::Incomplete.is_complete());
+        assert!(!Coverage::Unsupported.is_complete());
+    }
+
+    #[test]
+    fn non_complete_coverage_is_indeterminate_and_not_allowed() {
+        let policy =
+            CompiledPolicy::new(vec![Rule::allow(rule_id("allow-src"), repo_read("src/**"))]);
+        let capability = repo_read("src/lib.rs");
+        assert_eq!(
+            policy.evaluate(&capability, Coverage::Complete).decision(),
+            Decision::Allowed
+        );
+
+        for coverage in [Coverage::Incomplete, Coverage::Unsupported] {
+            let evaluation = policy.evaluate(&capability, coverage);
+            assert_eq!(evaluation, Evaluation::indeterminate());
+            assert_eq!(evaluation.decision(), Decision::Indeterminate);
+            assert_ne!(evaluation.decision(), Decision::Allowed);
+            assert_eq!(
+                evaluation.reason(),
+                Some(EvaluationReason::InsufficientCoverage)
+            );
+            assert!(evaluation.matched_rules().is_empty());
+        }
+    }
+
+    #[test]
+    fn non_complete_miss_is_indeterminate_not_unknown() {
+        let policy =
+            CompiledPolicy::new(vec![Rule::allow(rule_id("allow-src"), repo_read("src/**"))]);
+        let missing = repo_read("docs/readme.md");
+        assert_eq!(
+            policy.evaluate(&missing, Coverage::Complete),
+            Evaluation::unknown()
+        );
+        let evaluation = policy.evaluate(&missing, Coverage::Incomplete);
+        assert_eq!(evaluation, Evaluation::indeterminate());
+        assert_ne!(evaluation.decision(), Decision::Unknown);
+        assert_ne!(evaluation.decision(), Decision::Allowed);
+        assert_ne!(evaluation.decision(), Decision::Denied);
+    }
+
+    #[test]
+    fn explicit_deny_still_wins_when_coverage_is_not_complete() {
+        let allow = Rule::allow(rule_id("allow-src"), repo_read("src/**"));
+        let deny = Rule::deny(rule_id("deny-secret"), repo_read("src/secret.env"));
+        let observed = repo_read("src/secret.env");
+        for coverage in [Coverage::Incomplete, Coverage::Unsupported] {
+            let evaluation = CompiledPolicy::new(vec![allow.clone(), deny.clone()])
+                .evaluate(&observed, coverage);
+            assert_eq!(evaluation.decision(), Decision::Denied);
+            assert_eq!(evaluation.reason(), None);
+            assert_eq!(evaluation.matched_rules().len(), 1);
+            assert_eq!(evaluation.matched_rules()[0].id().as_str(), "deny-secret");
+            assert_ne!(evaluation.decision(), Decision::Indeterminate);
+            assert_ne!(evaluation.decision(), Decision::Allowed);
+        }
+    }
+
+    #[test]
+    fn non_complete_coverage_never_collapses_into_allowed() {
+        use proptest::prelude::*;
+        use proptest::test_runner::{TestRng, TestRunner};
+
+        let config = ProptestConfig {
+            cases: 64,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        };
+        let algorithm = config.rng_algorithm;
+        let mut runner = TestRunner::new_with_rng(config, TestRng::deterministic_rng(algorithm));
+        let parts = proptest::collection::vec(
+            prop_oneof![Just("src"), Just("domain"), Just("lib.rs"), Just("a")],
+            0..=3,
+        );
+        let rule = (any::<bool>(), parts.clone(), any::<bool>(), any::<bool>());
+        let strategy = (
+            proptest::collection::vec(rule, 0..=5),
+            (parts, any::<bool>(), any::<bool>()),
+            prop_oneof![Just(Coverage::Incomplete), Just(Coverage::Unsupported)],
+        );
+        runner
+            .run(
+                &strategy,
+                |(rules, (subject_parts, subject_recursive, subject_read), coverage)| {
+                    let subject = generated_read(subject_read, &subject_parts, subject_recursive);
+                    let compiled: Vec<Rule> = rules
+                        .iter()
+                        .enumerate()
+                        .map(|(index, (deny, rule_parts, recursive, read))| {
+                            let capability = generated_read(*read, rule_parts, *recursive);
+                            let id = rule_id(&format!("rule-{index}"));
+                            if *deny {
+                                Rule::deny(id, capability)
+                            } else {
+                                Rule::allow(id, capability)
+                            }
+                        })
+                        .collect();
+                    let policy = CompiledPolicy::new(compiled.clone());
+                    let evaluation = policy.evaluate(&subject, coverage);
+                    prop_assert!(!coverage.is_complete());
+                    prop_assert_ne!(evaluation.decision(), Decision::Allowed);
+                    prop_assert_eq!(&evaluation, &policy.evaluate(&subject, coverage));
+
+                    let deny_matches = compiled
+                        .iter()
+                        .any(|rule| rule.effect() == RuleEffect::Deny && rule.matches(&subject));
+                    if deny_matches {
+                        prop_assert_eq!(evaluation.decision(), Decision::Denied);
+                        prop_assert!(evaluation
+                            .matched_rules()
+                            .iter()
+                            .all(|rule| rule.effect() == RuleEffect::Deny));
+                    } else {
+                        prop_assert_eq!(&evaluation, &Evaluation::indeterminate());
+                        prop_assert_eq!(
+                            evaluation.reason(),
+                            Some(EvaluationReason::InsufficientCoverage)
+                        );
+                        let complete = policy.evaluate(&subject, Coverage::Complete);
+                        if complete.decision() == Decision::Allowed {
+                            prop_assert_ne!(evaluation.decision(), complete.decision());
+                        }
+                    }
+                    Ok(())
+                },
+            )
+            .expect("coverage");
     }
 }

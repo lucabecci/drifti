@@ -10,6 +10,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
+- Coverage-aware policy evaluation: non-complete coverage returns `INDETERMINATE` and cannot become `ALLOWED`, while an explicit deny still wins, in `drifti-core`.
 - Deterministic policy evaluation with deny-over-allow precedence in `drifti-core`.
 - Exact and recursive-prefix policy rule matching in `drifti-core`.
 - SPEC-001 property suite for normalization, equality, containment, serialization, and cross-resource rejection in `drifti-core`.

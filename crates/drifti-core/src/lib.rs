@@ -12,7 +12,9 @@
 //! A trailing `**` is a recursive prefix for containment.
 //! [`policy`] names `ALLOWED`, `DENIED`, `UNKNOWN`, and `INDETERMINATE`,
 //! matches a rule when its resource contains the capability, and evaluates
-//! with deny-over-allow precedence. Coverage checks are a later task.
+//! with deny-over-allow precedence when coverage is `COMPLETE`. Any other
+//! coverage yields `INDETERMINATE` unless an explicit deny matches. The
+//! engine does not infer coverage.
 //! [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]
