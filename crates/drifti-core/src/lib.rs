@@ -7,8 +7,9 @@
 //! It does not observe processes, persist traces, or render a terminal.
 //!
 //! [`capability`] and [`resource`] are the MVP action and resource model.
-//! Normalization, containment, and the capability serialization contract are
-//! later tasks. [`foundation`] is the serde boundary the domain types use.
+//! Filesystem paths are normalized to a stable anchor. Executable and network
+//! canonical identity, containment, and the capability serialization contract
+//! are later tasks. [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]
 

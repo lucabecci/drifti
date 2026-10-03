@@ -255,7 +255,12 @@ mod tests {
             proptest::collection::vec(proptest::char::range('a', 'z'), 1..=12),
         )
             .prop_map(|(anchor, chars)| {
-                let file_path: String = chars.into_iter().collect();
+                let body: String = chars.into_iter().collect();
+                let file_path = if anchor == FilesystemAnchor::Absolute {
+                    format!("/{body}")
+                } else {
+                    body
+                };
                 FileResource::new(anchor, file_path).expect("generated file path")
             })
     }
