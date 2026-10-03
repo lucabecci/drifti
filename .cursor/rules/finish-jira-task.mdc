@@ -1,0 +1,17 @@
+---
+description: After a Drifti task is implemented, commit it, open the pull request, merge it, and update Jira.
+alwaysApply: true
+---
+
+# Finish a Jira task
+
+When an implementation task is done, do not leave it uncommitted.
+
+1. Commit on that task's branch with a Conventional Commit.
+2. Open one pull request that references the Jira key.
+3. Wait until the required checks pass.
+4. Merge the pull request. Do not wait for a separate merge request.
+5. Move the Jira issue to **Completado** and comment the pull request URL.
+6. If a successor was blocked only by this issue, remove `blocked` and add `ready`.
+
+Leave the issue in **En revisión** with `phase-ready-to-merge` only while checks are still running. After the merge, **Completado** is the status.
