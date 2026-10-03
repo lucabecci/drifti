@@ -43,4 +43,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Unless you explicitly state otherwise, a
 - [Security policy](SECURITY.md)
 - [Changelog](CHANGELOG.md)
 - [Guidance for coding agents](AGENTS.md)
+- [Development Playbook](docs/development-playbook.md)
 - [LLM-readable index](llms.txt)
