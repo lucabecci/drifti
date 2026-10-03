@@ -15,6 +15,8 @@
 //! with deny-over-allow precedence when coverage is `COMPLETE`. Any other
 //! coverage yields `INDETERMINATE` unless an explicit deny matches. The
 //! engine does not infer coverage.
+//! [`contract`] is the version-1 contract document. Its version is mandatory.
+//! Parsing and compilation are later tasks.
 //! [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]
