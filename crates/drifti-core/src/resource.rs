@@ -6,12 +6,12 @@
 //! A file resource records an anchor and a normalized path. Equivalent paths
 //! share one form, and a path that leaves its anchor is not stored there.
 //! A final `**` component is a recursive prefix, not a glob. An executable
-//! resource records its identity text as supplied. A network resource records
-//! a transport, an IP address or CIDR, and a port.
+//! resource records a canonical identity. A network resource records a
+//! transport, an IP address or a CIDR network address, and a port.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use crate::foundation::{Deserialize, Serialize};
 
@@ -220,16 +220,19 @@ impl<'de> Deserialize<'de> for ExecutableResource {
 }
 
 impl ExecutableResource {
-    /// Builds an executable resource from the supplied identity text.
+    /// Builds an executable resource from its canonical identity.
     ///
-    /// The text is not canonicalized. An empty value or an embedded NUL is rejected.
+    /// A bare name is kept as supplied. A path is normalized lexically: `.` and
+    /// `..` that stay inside collapse, and a relative `..` that leaves the
+    /// relative root is rejected. An empty value or an embedded NUL is rejected.
+    /// The text is not resolved through `PATH` or the filesystem.
     pub fn new(identity: impl Into<String>) -> Result<Self, ResourceError> {
-        let identity = identity.into();
-        validate_text(&identity, ResourceError::EmptyExecutableIdentity)?;
+        let supplied = identity.into();
+        let identity = canonical_executable(&supplied)?;
         Ok(Self { identity })
     }
 
-    /// Identity text as supplied to [`Self::new`].
+    /// Canonical identity text.
     #[must_use]
     pub fn identity(&self) -> &str {
         &self.identity
@@ -265,6 +268,8 @@ struct CidrFields {
 
 impl Cidr {
     /// CIDR prefix. The prefix length must fit the address family.
+    ///
+    /// Host bits are cleared, so `10.1.2.3/8` and `10.0.0.0/8` are one network.
     pub fn new(address: IpAddr, prefix_length: u8) -> Result<Self, ResourceError> {
         let maximum = prefix_maximum(address);
         if prefix_length > maximum {
@@ -274,7 +279,7 @@ impl Cidr {
             });
         }
         Ok(Self {
-            address,
+            address: canonical_network(address, prefix_length),
             prefix_length,
         })
     }
@@ -438,6 +443,8 @@ pub enum ResourceError {
     EmbeddedNul,
     /// A relative path left `repo://`, `home://`, or `temp://`.
     EscapesAnchor,
+    /// A relative executable path left its relative root.
+    ExecutableEscape,
     /// `repo://`, `home://`, or `temp://` was given an absolute path.
     NotRelative,
     /// `abs://` or a filesystem root was given a relative path.
@@ -462,6 +469,9 @@ impl Display for ResourceError {
             }
             Self::EmbeddedNul => formatter.write_str("resource text contains a NUL byte"),
             Self::EscapesAnchor => formatter.write_str("path leaves its filesystem anchor"),
+            Self::ExecutableEscape => {
+                formatter.write_str("executable path leaves its relative root")
+            }
             Self::NotRelative => formatter.write_str("anchored file path must stay relative"),
             Self::NotAbsolute => formatter.write_str("absolute file path must start with /"),
             Self::MisplacedRecursiveMarker => {
@@ -493,7 +503,7 @@ fn normalize_relative(text: &str) -> Result<String, ResourceError> {
     if text.starts_with('/') || text.starts_with('\\') {
         return Err(ResourceError::NotRelative);
     }
-    normalize_components(text, false)
+    normalize_components(text, false, true)
 }
 
 fn normalize_absolute(text: &str) -> Result<String, ResourceError> {
@@ -501,10 +511,14 @@ fn normalize_absolute(text: &str) -> Result<String, ResourceError> {
     if !unified.starts_with('/') {
         return Err(ResourceError::NotAbsolute);
     }
-    normalize_components(&unified, true)
+    normalize_components(&unified, true, true)
 }
 
-fn normalize_components(text: &str, absolute: bool) -> Result<String, ResourceError> {
+fn normalize_components(
+    text: &str,
+    absolute: bool,
+    interpret_recursive: bool,
+) -> Result<String, ResourceError> {
     let mut stack = Vec::new();
     let mut recursive = false;
     let parts: Vec<&str> = text.split(['/', '\\']).collect();
@@ -518,7 +532,7 @@ fn normalize_components(text: &str, absolute: bool) -> Result<String, ResourceEr
                     return Err(ResourceError::EscapesAnchor);
                 }
             }
-            "**" => {
+            "**" if interpret_recursive => {
                 let rest_is_empty = parts[index + 1..]
                     .iter()
                     .all(|part| part.is_empty() || *part == ".");
@@ -673,6 +687,45 @@ fn root_specificity(root: &str) -> usize {
             .filter(|component| !component.is_empty())
             .count()
     }
+}
+
+fn canonical_executable(text: &str) -> Result<String, ResourceError> {
+    validate_text(text, ResourceError::EmptyExecutableIdentity)?;
+    let path_like = text.contains('/') || text.contains('\\') || text == "." || text == "..";
+    if !path_like {
+        return Ok(text.to_owned());
+    }
+    if text.starts_with('/') || text.starts_with('\\') {
+        let unified = text.replace('\\', "/");
+        return normalize_components(&unified, true, false);
+    }
+    normalize_components(text, false, false).map_err(|error| match error {
+        ResourceError::EscapesAnchor => ResourceError::ExecutableEscape,
+        other => other,
+    })
+}
+
+fn canonical_network(address: IpAddr, prefix_length: u8) -> IpAddr {
+    match address {
+        IpAddr::V4(ipv4) => IpAddr::V4(mask_v4(ipv4, prefix_length)),
+        IpAddr::V6(ipv6) => IpAddr::V6(mask_v6(ipv6, prefix_length)),
+    }
+}
+
+fn mask_v4(address: Ipv4Addr, prefix_length: u8) -> Ipv4Addr {
+    if prefix_length == 0 {
+        return Ipv4Addr::UNSPECIFIED;
+    }
+    let mask = u32::MAX << (32 - u32::from(prefix_length));
+    Ipv4Addr::from(u32::from(address) & mask)
+}
+
+fn mask_v6(address: Ipv6Addr, prefix_length: u8) -> Ipv6Addr {
+    if prefix_length == 0 {
+        return Ipv6Addr::UNSPECIFIED;
+    }
+    let mask = u128::MAX << (128 - u32::from(prefix_length));
+    Ipv6Addr::from(u128::from(address) & mask)
 }
 
 fn validate_text(text: &str, empty: ResourceError) -> Result<(), ResourceError> {
@@ -1110,5 +1163,88 @@ mod tests {
             }
         };
         FileResource::new(anchor, supplied).expect("generated file")
+    }
+
+    #[test]
+    fn executable_identity_equality_is_canonical() {
+        let expected = ExecutableResource::new("git").expect("name");
+        assert_eq!(
+            ExecutableResource::new("./git").expect("relative"),
+            expected
+        );
+        assert_eq!(
+            ExecutableResource::new("bin/../git").expect("collapsed"),
+            expected
+        );
+        let absolute = ExecutableResource::new("/usr/bin/./git").expect("absolute");
+        assert_eq!(absolute.identity(), "/usr/bin/git");
+        assert_eq!(
+            ExecutableResource::new(absolute.identity()).expect("again"),
+            absolute
+        );
+        assert_ne!(absolute, expected);
+        assert_eq!(
+            ExecutableResource::new("../git"),
+            Err(ResourceError::ExecutableEscape)
+        );
+        let literal = ExecutableResource::new("bin/**/git").expect("literal marker");
+        assert_eq!(literal.identity(), "bin/**/git");
+    }
+
+    #[test]
+    fn cidr_identity_clears_host_bits() {
+        let supplied = IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3));
+        let network = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0));
+        let cidr = Cidr::new(supplied, 8).expect("cidr");
+        assert_eq!(cidr.address(), network);
+        assert_eq!(Cidr::new(network, 8).expect("again"), cidr);
+        let v6 = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
+        let masked = Cidr::new(v6, 32).expect("v6");
+        assert_eq!(
+            masked.address(),
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0))
+        );
+    }
+
+    #[test]
+    fn executable_and_network_serialization_is_lossless() {
+        let executable = ExecutableResource::new("/usr/bin/./git").expect("executable");
+        let executable_json = serde_json::to_string(&executable).expect("json");
+        assert_eq!(
+            serde_json::from_str::<ExecutableResource>(&executable_json).expect("back"),
+            executable
+        );
+        let cidr = Cidr::new(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)), 8).expect("cidr");
+        let network = NetworkResource::new(NetworkProtocol::Tcp, NetworkAddress::Cidr(cidr), 443);
+        let network_json = serde_json::to_string(&network).expect("json");
+        let restored = serde_json::from_str::<NetworkResource>(&network_json).expect("back");
+        assert_eq!(restored, network);
+        assert_eq!(restored.protocol(), NetworkProtocol::Tcp);
+        assert_eq!(restored.port(), 443);
+        assert_eq!(restored.address(), NetworkAddress::Cidr(cidr));
+    }
+
+    #[test]
+    fn cidr_canonical_form_is_idempotent() {
+        use proptest::prelude::*;
+        use proptest::test_runner::{TestRng, TestRunner};
+
+        let config = ProptestConfig {
+            cases: 64,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        };
+        let algorithm = config.rng_algorithm;
+        let mut runner = TestRunner::new_with_rng(config, TestRng::deterministic_rng(algorithm));
+        let strategy = (any::<u32>(), 0u8..=32);
+        runner
+            .run(&strategy, |(bits, prefix_length)| {
+                let address = IpAddr::V4(Ipv4Addr::from(bits));
+                let cidr = Cidr::new(address, prefix_length).expect("cidr");
+                let again = Cidr::new(cidr.address(), cidr.prefix_length()).expect("again");
+                prop_assert_eq!(cidr, again);
+                Ok(())
+            })
+            .expect("property");
     }
 }

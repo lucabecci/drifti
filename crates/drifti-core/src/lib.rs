@@ -7,9 +7,9 @@
 //! It does not observe processes, persist traces, or render a terminal.
 //!
 //! [`capability`] and [`resource`] are the MVP action and resource model.
-//! Filesystem paths are normalized to a stable anchor, and a trailing `**`
-//! is a recursive prefix for containment. Executable and network canonical
-//! identity and the capability serialization contract are later tasks.
+//! Filesystem paths, executable identity, and network addresses are normalized.
+//! A trailing `**` is a recursive prefix for containment. The capability
+//! serialization contract is a later task.
 //! [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]
