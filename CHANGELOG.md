@@ -11,3 +11,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 ### Added
 
 - Development Playbook for SPEC-driven agent work, with project skills for implementation, Rust conventions, spec validation, and security review.
+
+### Changed
+
+- Require Jira project KAN as the execution source for implementation tasks, including claim, review phases, and promotion of unblocked successors.
