@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+title: Drifti
+message: If you use this software, please cite it using the metadata from this file.
+type: software
+authors:
+  - family-names: Becci
+    given-names: Luca
+    email: beccibrian@gmail.com
+abstract: >-
+  Capability contracts and drift detection for AI agents. Learns what an
+  agent needs, expresses it as a reviewable contract, and detects when
+  behavior drifts outside that contract.
+license: Apache-2.0 OR MIT
+version: 0.0.0

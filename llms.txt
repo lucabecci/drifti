@@ -1,0 +1,19 @@
+# Drifti
+
+> Capability contracts and drift detection for AI agents. Drifti learns what an agent needs, turns it into a reviewable contract, and detects when behavior drifts outside that contract. Authored by Luca Becci. The CLI is not implemented yet.
+
+Drifti is a local-first Rust developer tool. It sits between observation and enforcement. It is not a coding agent, a sandbox, or a generic observability platform. The trust boundary is deterministic: an LLM may explain or propose, and must not approve capabilities or change a trusted contract.
+
+## Docs
+
+- [README](README.md): Product statement, status, and dual license
+- [AGENTS.md](AGENTS.md): Instructions for coding agents working in this repository
+- [CONTRIBUTING.md](CONTRIBUTING.md): Conventional Commits, contribution license, and local git hooks
+- [SECURITY.md](SECURITY.md): How to report a vulnerability in private
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): Contributor Covenant 2.1
+- [CHANGELOG.md](CHANGELOG.md): Keep a Changelog, fed by Conventional Commits
+- [AUTHORS](AUTHORS): Copyright authors
+
+## Optional
+
+- [Citation](CITATION.cff): Citation File Format metadata
