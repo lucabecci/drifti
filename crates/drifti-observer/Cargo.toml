@@ -1,0 +1,21 @@
+[package]
+name = "drifti-observer"
+version = "0.1.0"
+description = "Platform-neutral observation boundary for Drifti"
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# Platform-neutral only. Linux, ptrace, SQLite, and CLI crates do not belong here.
+# This crate does not depend on drifti-core. Contract serialization stays there.
+[dependencies]
+serde = { version = "1.0.217", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0.138"
+
+[lints]
+workspace = true
