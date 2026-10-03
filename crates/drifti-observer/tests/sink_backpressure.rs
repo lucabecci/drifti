@@ -95,22 +95,19 @@ fn observer_run_returns_sink_error_when_the_cursor_is_gone() {
     };
     let command = CommandSpec::try_new("demo", [], None).expect("command");
     let (sink, cursor) = EventSink::bounded(NonZeroUsize::new(1).expect("capacity"));
-    let run_sink = sink.clone();
-    let handle = thread::spawn(move || observer.run(command, run_sink));
+    let handle = thread::spawn(move || observer.run(command, sink));
 
     wait_phase(&phase, |value| value >= 1);
     drop(cursor);
 
-    let error = handle
-        .join()
-        .expect("observer thread")
-        .expect_err("sink failure must not be Ok");
+    let (returned, result) = handle.join().expect("observer thread");
+    let error = result.expect_err("sink failure must not be Ok");
     let ObserverError::Sink(sink_error) = error else {
         panic!("expected ObserverError::Sink, got {error}");
     };
     assert_eq!(sink_error.into_event(), second);
-    assert_eq!(sink.take_unconsumed(), vec![first]);
-    assert!(sink.take_unconsumed().is_empty());
+    assert_eq!(returned.take_unconsumed(), vec![first]);
+    assert!(returned.take_unconsumed().is_empty());
 }
 
 struct SinkFailureObserver {
@@ -124,18 +121,29 @@ impl Observer for SinkFailureObserver {
         ObserverCapabilities::new([CapabilityDomain::Filesystem])
     }
 
-    fn run(&self, command: CommandSpec, sink: EventSink) -> Result<ExecutionResult, ObserverError> {
+    fn run(
+        &self,
+        command: CommandSpec,
+        sink: EventSink,
+    ) -> (EventSink, Result<ExecutionResult, ObserverError>) {
         let _ = command.program();
-        sink.emit(self.first.clone())?;
+        if let Err(error) = sink.emit(self.first.clone()) {
+            return (sink, Err(error.into()));
+        }
         self.phase.store(1, Ordering::Release);
-        sink.emit(self.second.clone())?;
+        if let Err(error) = sink.emit(self.second.clone()) {
+            return (sink, Err(error.into()));
+        }
         let coverage =
             ExecutionCoverage::declared(ObservationCoverage::Incomplete, []).expect("coverage");
-        Ok(ExecutionResult::new(
-            self.first.execution_id(),
-            coverage,
-            Some(0),
-        ))
+        (
+            sink,
+            Ok(ExecutionResult::new(
+                self.first.execution_id(),
+                coverage,
+                Some(0),
+            )),
+        )
     }
 }
 
