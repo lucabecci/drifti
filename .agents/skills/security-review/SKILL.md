@@ -1,6 +1,6 @@
 ---
 name: security-review
-description: Reviews Drifti changes for false coverage, silent event loss, capability over-generalization, secret persistence, and other observation-security failures. Use when reviewing Drifti security assumptions, observation coverage, policy decisions, or when the user asks for a Drifti security review.
+description: Reviews Drifti changes for false coverage, silent event loss, capability over-generalization, secret persistence, and other observation-security failures. Use when a Jira task is in En revisión with phase-security-review, when reviewing Drifti security assumptions, observation coverage, or policy decisions, or when the user asks for a Drifti security review.
 ---
 
 # Drifti security review
@@ -46,3 +46,9 @@ Prefer the narrowest honest capability. A generated contract is a proposal until
 ## Output
 
 For each finding, name the assumption it breaks, the evidence in the change, and whether it is resolved or must be explicitly accepted.
+
+Add that result as a Jira comment while the issue is **En revisión** with label `phase-security-review`.
+
+- On failure, move the issue back to **En progreso**.
+- On pass, replace `phase-security-review` with `phase-ready-to-merge`.
+- Leave **Completado** until merge or explicit accepted completion.
