@@ -14,10 +14,15 @@
 //! Observation written here is not authorization. `COMPLETE` coverage is a
 //! stored declaration, not a policy decision, and this crate does not turn a
 //! storage failure into that declaration.
+//!
+//! [`Store::create_execution`] records a started execution. It does not grant
+//! a capability. Command metadata is the program and an argument count;
+//! argument values, prompts, and responses are not columns.
 
 #![forbid(unsafe_code)]
 
 mod error;
+mod execution;
 mod schema;
 
 use std::fs;
@@ -26,12 +31,17 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OpenFlags};
 
 pub use error::StoreError;
+pub use execution::{
+    CapabilityDomain, CommandMetadata, CoverageStatus, ExecutionId, ExecutionRecord,
+    ExecutionRepository, FinishExecution, Lifecycle,
+};
 pub use schema::{
     canonical_resource, parse_canonical_resource, sqlite_i64, CanonicalResource,
     OwnedCanonicalResource, DATABASE_FILE, MAX_IDENTITY_BYTES, PROHIBITED_COLUMN_NAMES,
     SCHEMA_VERSION, STATE_DIR,
 };
 
+use execution::IdGenerator;
 use schema::DDL;
 
 /// Open SQLite file under `{workspace}/.drifti/state.db`.
@@ -39,6 +49,7 @@ use schema::DDL;
 pub struct Store {
     path: PathBuf,
     connection: Connection,
+    ids: IdGenerator,
 }
 
 impl Store {
@@ -60,11 +71,19 @@ impl Store {
             Inspect::Missing | Inspect::Empty => {
                 let mut connection = open_read_write(&path)?;
                 initialize(&mut connection).map_err(|source| map_sqlite(&path, source))?;
-                Ok(Self { path, connection })
+                Ok(Self {
+                    path,
+                    connection,
+                    ids: IdGenerator::new(),
+                })
             }
             Inspect::Compatible => {
                 let connection = open_read_write(&path)?;
-                Ok(Self { path, connection })
+                Ok(Self {
+                    path,
+                    connection,
+                    ids: IdGenerator::new(),
+                })
             }
             Inspect::Incompatible { found } => Err(StoreError::IncompatibleSchema {
                 path,
