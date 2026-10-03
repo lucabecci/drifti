@@ -73,6 +73,7 @@ The root [AGENTS.md](../AGENTS.md) is the enforced copy. It keeps this playbook'
 - Security invariants.
 - Rust engineering expectations.
 - SPEC-driven change workflow.
+- Jira task lifecycle.
 - Testing expectations.
 - Canonical product vocabulary.
 
@@ -468,3 +469,204 @@ Each implementation PR should identify:
 > **SPEC → implement → validate → security review → fix → test → PR.**
 
 Keep the workflow small, explicit and repeatable. Add more agent roles or frameworks only after a real bottleneck appears.
+
+## Jira execution layer
+
+**Project:** Drifti (`KAN`) — <https://lucabecci.atlassian.net/jira/software/projects/KAN/boards/1>
+
+Jira is the execution/control layer. Confluence remains the source of truth for product, architecture and SPEC behavior.
+
+### Board model
+
+The current team-managed Kanban board exposes four native statuses:
+
+- **Tareas por hacer**
+- **En progreso**
+- **En revisión**
+- **Completado**
+
+Agent phases that do not have dedicated Jira statuses are represented with labels.
+
+```text
+Tareas por hacer + ready
+        ↓
+En progreso
+        ↓
+En revisión + phase-validation
+        ↓
+En revisión + phase-security-review
+        ↓
+En revisión + phase-ready-to-merge
+        ↓
+Completado
+```
+
+A blocked issue remains in **Tareas por hacer** with label `blocked`. Agents must not claim blocked issues.
+
+### Agent task-claim protocol
+
+1. Query project `KAN` for issues with label `ready`.
+2. Check Jira dependency links and confirm the issue is not blocked.
+3. Read the linked Confluence SPEC and this Development Playbook.
+4. Move the issue to **En progreso** before changing code.
+5. Implement only the ticket/SPEC scope.
+6. Comment implementation results, tests and acceptance-criteria status in Jira.
+7. Move to **En revisión** and replace the phase label with `phase-validation`.
+8. After validation, set `phase-security-review`.
+9. After validation and security review pass, set `phase-ready-to-merge`.
+10. Move to **Completado** only after accepted completion/merge.
+
+### Backlog hierarchy
+
+- Each implementation SPEC is represented by one Jira Epic (`KAN-1` through `KAN-10`).
+- Implementation work is represented by Tasks under the corresponding Epic.
+- Jira **Blocks** links encode implementation ordering and cross-SPEC dependencies.
+- Only tasks that can be started safely receive the `ready` label.
+
+### MVP release groups
+
+| Release | SPECs |
+| --- | --- |
+| `v0.1-core` | SPEC-001 to SPEC-003 |
+| `v0.1-observation` | SPEC-004 to SPEC-006 |
+| `v0.1-intelligence` | SPEC-007 to SPEC-008 |
+| `v0.1-product` | SPEC-009 to SPEC-010 |
+
+### Recommended MCP prompt
+
+```text
+Take the next READY task from Jira project KAN.
+
+Before coding:
+1. Verify it has label ready and no unresolved blocking issue.
+2. Move it to En progreso.
+3. Read the linked Confluence SPEC.
+4. Read the Drifti Development Playbook.
+5. Identify acceptance criteria and affected crates.
+
+Implement the smallest coherent change.
+Run relevant tests, cargo fmt and cargo clippy.
+
+When implementation is complete:
+- comment what changed, tests run and acceptance-criteria status,
+- move the issue to En revisión,
+- set phase-validation,
+- do not mark it Completado until validation/security review and merge are complete.
+```
+
+## Mandatory Atlassian Task Protocol
+
+**This protocol is mandatory for every implementation task.** Agents must use Atlassian MCP as part of the task lifecycle. The developer should not need to repeat these instructions in each prompt.
+
+### Task source rule
+
+For normal implementation work, an agent must not begin by choosing arbitrary work from the repository or from a SPEC directly.
+
+The default entrypoint is Jira project `KAN`.
+
+```text
+Jira READY task
+      ↓
+claim
+      ↓
+Confluence context
+      ↓
+implementation
+      ↓
+Jira progress update
+      ↓
+validation
+      ↓
+security review
+      ↓
+merge
+      ↓
+Jira DONE
+```
+
+### Mandatory lifecycle
+
+1. Use Atlassian MCP to query project `KAN`.
+2. Select only a task carrying label `ready`.
+3. Verify the task has no unresolved Jira **Blocks / is blocked by** dependency.
+4. Read the task description and its linked Confluence SPEC.
+5. Read this Development Playbook if it has not already been loaded in the current agent context.
+6. Move the Jira task to **En progreso** before editing code.
+7. Comment on the issue that the task has been claimed, including the implementation branch/worktree when available.
+8. Implement only the scope described by the task and linked SPEC.
+9. Run required tests, `cargo fmt --check` and relevant `cargo clippy`.
+10. Comment on Jira with:
+    - summary of changes,
+    - files/crates affected,
+    - tests and commands executed,
+    - acceptance criteria status,
+    - known limitations or deviations.
+11. Move the task to **En revisión** and set label `phase-validation`.
+12. Run the `validate-spec` workflow. Add the validation result to Jira.
+13. If validation fails, move the issue back to **En progreso**, fix the findings and repeat validation.
+14. When validation passes, replace the phase label with `phase-security-review`.
+15. Run the `security-review` workflow. Add findings/result to Jira.
+16. If security review fails, move back to **En progreso** and resolve findings.
+17. When both reviews pass, set `phase-ready-to-merge`.
+18. After merge or explicit accepted completion, move the issue to **Completado**.
+19. Inspect Jira dependencies. For each directly blocked successor whose blockers are now complete, remove `blocked` and add `ready`.
+
+`cargo fmt` and `cargo clippy` apply once a Rust workspace exists. Do not initialize the toolchain to satisfy this lifecycle.
+
+### Visibility requirement
+
+Jira must reflect reality. An agent must not keep working while leaving the issue in a stale phase.
+
+- Working on code → **En progreso**.
+- Waiting for SPEC validation → **En revisión + phase-validation**.
+- Waiting for security review → **En revisión + phase-security-review**.
+- Approved and waiting for merge → **En revisión + phase-ready-to-merge**.
+- Merged/accepted → **Completado**.
+
+### Exceptions
+
+The Jira lifecycle may be skipped only for:
+
+- read-only investigation explicitly requested by the user,
+- very small emergency fixes when the user explicitly says not to create/use Jira work,
+- work whose purpose is itself to repair Jira/Atlassian integration.
+
+Otherwise, Atlassian MCP usage is mandatory.
+
+### Agent completion rule
+
+An agent must not report a task as finished until the Jira issue has been updated with the implementation result and current lifecycle phase.
+
+### Mandatory Jira / Atlassian MCP rule for AGENTS.md
+
+The following rule is included in the repository root [AGENTS.md](../AGENTS.md):
+
+```text
+## Mandatory Jira task lifecycle
+
+Jira project KAN is the execution source of truth for Drifti development.
+
+For normal implementation work, always use Atlassian MCP.
+
+Before editing code:
+1. Take only a Jira task labeled ready.
+2. Confirm all blocking Jira dependencies are complete.
+3. Read the linked Confluence SPEC.
+4. Move the issue to En progreso.
+5. Comment that the task has been claimed.
+
+During and after implementation:
+- keep Jira status aligned with actual work,
+- comment implementation summary, tests and acceptance criteria,
+- move to En revisión + phase-validation,
+- run validate-spec,
+- then phase-security-review,
+- then phase-ready-to-merge,
+- only move to Completado after merge/accepted completion.
+
+When completing a task, inspect its blocked successors and promote newly unblocked work from blocked to ready.
+
+Do not report implementation work as complete until Jira has been updated.
+
+Exceptions require an explicit user instruction or a read-only investigation task.
+```
