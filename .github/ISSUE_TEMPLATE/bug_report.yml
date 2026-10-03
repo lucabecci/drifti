@@ -1,0 +1,30 @@
+name: Bug report
+description: Report a defect in Drifti
+title: "fix: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The title should stay a Conventional Commit (`fix: ...`).
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How can it be reproduced?
+      description: Steps, inputs, or a minimal example.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system and, once the crate exists, the Rust version.
+    validations:
+      required: false
