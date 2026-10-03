@@ -74,6 +74,7 @@ The root [AGENTS.md](../AGENTS.md) is the enforced copy. It keeps this playbook'
 - Rust engineering expectations.
 - SPEC-driven change workflow.
 - Jira task lifecycle.
+- Branch, worktree, and pull request lifecycle.
 - Testing expectations.
 - Canonical product vocabulary.
 
@@ -669,4 +670,164 @@ When completing a task, inspect its blocked successors and promote newly unblock
 Do not report implementation work as complete until Jira has been updated.
 
 Exceptions require an explicit user instruction or a read-only investigation task.
+```
+
+## Mandatory Branch & Worktree Convention
+
+**This convention is mandatory for every implementation task.** Branch creation is part of the Jira claim lifecycle and must happen before code changes.
+
+### Branch rule
+
+Each Jira implementation task maps to exactly one branch unless the user explicitly approves an exception.
+
+```text
+<type>/<JIRA-KEY>-<short-title-kebab-case>
+```
+
+Examples:
+
+```text
+chore/KAN-11-bootstrap-drifti-core
+feat/KAN-12-capability-resource-model
+fix/KAN-42-path-normalization-symlink
+```
+
+### Allowed branch types
+
+| Type | Use |
+| --- | --- |
+| `feat` | New product capability or functional behavior. |
+| `fix` | Bug fix. |
+| `chore` | Bootstrap, tooling, configuration, maintenance. |
+| `docs` | Documentation-only changes. |
+| `refactor` | Internal code restructuring without new behavior. |
+| `test` | Test-only changes. |
+| `perf` | Performance-focused changes. |
+| `ci` | CI/CD and automation changes. |
+
+### Naming constraints
+
+- The Jira key is mandatory and uppercase, for example `KAN-12`.
+- The short title must be concise, descriptive and use kebab-case.
+- Do not repeat unnecessary words from the Epic/SPEC name.
+- Do not use spaces, underscores or arbitrary personal prefixes.
+- Do not reuse the same branch for a later Jira task.
+
+### Creation timing
+
+The sequence is mandatory:
+
+```text
+claim Jira task
+    ↓
+move to En progreso
+    ↓
+create branch
+    ↓
+comment branch/worktree on Jira
+    ↓
+begin code changes
+```
+
+Agents must never modify implementation code before the task is claimed and the branch exists.
+
+### Main branch protection rule
+
+Agents must never perform normal implementation work directly on `main`.
+
+Every implementation change must originate from a Jira-linked task branch.
+
+### Parallel work and worktrees
+
+When multiple READY tasks are implemented in parallel, each task must use its own branch and dedicated worktree.
+
+Recommended convention:
+
+```text
+branch:
+feat/KAN-13-filesystem-normalization
+
+worktree:
+../drifti-kan-13
+```
+
+Never run multiple implementation agents against the same working tree or branch.
+
+### Jira visibility
+
+The claim comment must include:
+
+- branch name,
+- worktree path when used,
+- agent/runtime identity when useful.
+
+Example:
+
+```text
+Claimed for implementation.
+
+Branch:
+feat/KAN-13-filesystem-normalization
+
+Worktree:
+../drifti-kan-13
+```
+
+### Pull request rule
+
+- Every implementation pull request must reference its Jira key.
+- The pull request scope should match one Jira task whenever practical.
+- A pull request must not silently include unrelated future tasks.
+
+### Completion rule
+
+After merge or accepted completion:
+
+1. Update Jira with the final implementation result.
+2. Move the issue to **Completado**.
+3. Inspect blocked successors and promote newly unblocked tasks from `blocked` to `ready`.
+4. Do not reuse the merged branch for another task.
+
+### Mandatory AGENTS.md branch rule
+
+The repository root [AGENTS.md](../AGENTS.md) includes the following rule:
+
+```text
+## Mandatory branch and worktree lifecycle
+
+Every Jira implementation task must use its own branch.
+
+Before changing code:
+1. Claim a READY task from Jira project KAN.
+2. Move it to En progreso.
+3. Create a branch using:
+   <type>/<JIRA-KEY>-<short-title-kebab-case>
+4. Comment the branch name in Jira.
+5. If parallel work is used, create a dedicated worktree and comment its path.
+
+Allowed branch types:
+- feat
+- fix
+- chore
+- docs
+- refactor
+- test
+- perf
+- ci
+
+Examples:
+- chore/KAN-11-bootstrap-drifti-core
+- feat/KAN-12-capability-resource-model
+- fix/KAN-42-path-normalization-symlink
+
+Never work directly on main.
+Never reuse a task branch for another Jira task.
+One Jira task should map to one branch and one focused PR whenever practical.
+Every PR must reference the Jira key.
+
+For parallel work, use one dedicated worktree per task/branch.
+Recommended worktree naming:
+../drifti-kan-<number>
+
+Do not report implementation complete until Jira reflects the final phase and result.
 ```
