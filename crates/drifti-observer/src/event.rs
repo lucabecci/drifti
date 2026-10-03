@@ -8,6 +8,7 @@
 //! command argument vector. `sequence` orders events inside one execution.
 //! [`MonotonicTimestamp`] is not an ordering key.
 
+use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
@@ -221,8 +222,9 @@ impl FailureReason {
 
 /// Whether the operation succeeded.
 ///
-/// [`Outcome::Success`] is an exercised operation.
-/// [`Outcome::Failure`] is an attempted operation that was not exercised.
+/// RFC-001: an attempted capability is an operation the process attempted, and
+/// an exercised capability is an operation that succeeded. [`Self::Success`]
+/// is attempted and exercised. [`Self::Failure`] is attempted and not exercised.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Outcome {
@@ -238,7 +240,7 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// Exercised operation.
+    /// Attempted operation that succeeded.
     #[must_use]
     pub const fn success() -> Self {
         Self::Success
@@ -367,6 +369,39 @@ impl ObservedEvent {
     #[must_use]
     pub const fn evidence(&self) -> EvidenceMeta {
         self.evidence
+    }
+
+    /// Orders two events by `sequence` inside one execution.
+    ///
+    /// Returns `None` when `execution_id` differs. Does not read `timestamp`.
+    #[must_use]
+    pub fn sequence_cmp(&self, other: &Self) -> Option<Ordering> {
+        if self.execution_id != other.execution_id {
+            return None;
+        }
+        Some(self.sequence.cmp(&other.sequence))
+    }
+
+    /// Whether the operation succeeded.
+    ///
+    /// True only for [`Outcome::Success`]. A failure is not exercised.
+    #[must_use]
+    pub const fn was_exercised(&self) -> bool {
+        match self.outcome() {
+            Outcome::Success => true,
+            Outcome::Failure { .. } => false,
+        }
+    }
+
+    /// Whether the process attempted the operation.
+    ///
+    /// True for both [`Outcome::Success`] and [`Outcome::Failure`]. Success is
+    /// an attempt that was exercised. Failure is an attempt that was not.
+    #[must_use]
+    pub const fn was_attempted(&self) -> bool {
+        match self.outcome() {
+            Outcome::Success | Outcome::Failure { .. } => true,
+        }
     }
 }
 
