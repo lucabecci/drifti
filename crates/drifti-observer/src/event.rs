@@ -229,7 +229,10 @@ impl FailureReason {
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Outcome {
     /// The operation succeeded.
-    Success,
+    ///
+    /// This is a struct variant so unknown JSON fields are rejected.
+    /// A unit variant of an internally tagged enum would ignore them.
+    Success {},
     /// The operation failed. `errno` and `reason` are present only when known.
     Failure {
         /// Errno when the backend knows it. This is a plain integer, not an FFI type.
@@ -243,7 +246,7 @@ impl Outcome {
     /// Attempted operation that succeeded.
     #[must_use]
     pub const fn success() -> Self {
-        Self::Success
+        Self::Success {}
     }
 
     /// Attempted operation that did not succeed.
@@ -388,7 +391,7 @@ impl ObservedEvent {
     #[must_use]
     pub const fn was_exercised(&self) -> bool {
         match self.outcome() {
-            Outcome::Success => true,
+            Outcome::Success {} => true,
             Outcome::Failure { .. } => false,
         }
     }
@@ -400,7 +403,7 @@ impl ObservedEvent {
     #[must_use]
     pub const fn was_attempted(&self) -> bool {
         match self.outcome() {
-            Outcome::Success | Outcome::Failure { .. } => true,
+            Outcome::Success {} | Outcome::Failure { .. } => true,
         }
     }
 }
