@@ -59,6 +59,36 @@ fn workspace_manifest() -> PathBuf {
     crate_dir().join("../../Cargo.toml")
 }
 
+/// Quoted paths inside the workspace `members` array.
+///
+/// The scan stops at the first `]` so a later table cannot add a crate.
+fn workspace_members(manifest: &str) -> Vec<String> {
+    let workspace = manifest.split("[workspace.").next().unwrap_or(manifest);
+    let after_key = workspace
+        .split_once("members")
+        .expect("workspace members key")
+        .1;
+    let inside = after_key
+        .split_once('[')
+        .expect("members array")
+        .1
+        .split_once(']')
+        .expect("members array end")
+        .0;
+    inside
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| {
+            assert!(
+                item.starts_with('"') && item.ends_with('"') && item.len() >= 2,
+                "workspace member is not a quoted path: {item}"
+            );
+            item[1..item.len() - 1].to_string()
+        })
+        .collect()
+}
+
 fn tokens_in(source: &str) -> Vec<&'static str> {
     FORBIDDEN_SOURCE_TOKENS
         .iter()
@@ -877,15 +907,14 @@ fn dependencies_stay_inside_the_domain_boundary() {
 }
 
 #[test]
-fn workspace_contains_only_drifti_core() {
+fn workspace_contains_only_drifti_core_and_drifti_observer() {
     let manifest = fs::read_to_string(workspace_manifest()).expect("read workspace manifest");
-    assert!(manifest.contains("members = [\"crates/drifti-core\"]"));
-    for member in [
-        "drifti-observer",
-        "drifti-observer-linux",
-        "drifti-store",
-        "drifti-cli",
-    ] {
+    let members = workspace_members(&manifest);
+    assert_eq!(
+        members.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["crates/drifti-core", "crates/drifti-observer"]
+    );
+    for member in ["drifti-observer-linux", "drifti-store", "drifti-cli"] {
         assert!(
             !manifest.contains(member),
             "workspace manifest names {member} before that crate is initialized"
