@@ -193,7 +193,11 @@ pub enum TraceError {
         /// `errno` from `ptrace`.
         errno: i32,
     },
-    /// The kernel wrote fewer bytes than `ptrace_syscall_info`.
+    /// The kernel wrote fewer bytes than the active member's required prefix.
+    ///
+    /// An exit stop is complete at `offsetofend(exit.is_error)` (33 bytes on
+    /// the 64-bit UAPI layout). The padded `repr(C)` size of that member is
+    /// not the threshold.
     SyscallInfoTruncated {
         /// Bytes reported by the kernel.
         wrote: i64,
@@ -236,6 +240,18 @@ pub enum TraceError {
     Sink(SinkError),
     /// The lifecycle ended while a tracee was still live.
     LiveTraceesRemain,
+    /// `SIGKILL` did not reap this tracee. This is not a successful run.
+    ///
+    /// `prior` is the failure already in progress, when cleanup ran after it.
+    /// Neither fact is discarded. `errno` is `0` when the reap deadline expired.
+    TraceeNotReaped {
+        /// Thread that was still alive.
+        tid: u32,
+        /// `errno` from the failing kill or wait, or `0` on deadline.
+        errno: i32,
+        /// Failure that cleanup must not replace.
+        prior: Option<Box<TraceError>>,
+    },
 }
 
 impl TraceError {
@@ -265,7 +281,8 @@ impl TraceError {
             | Self::InvalidTid
             | Self::StopLimit { .. }
             | Self::Visitor
-            | Self::LiveTraceesRemain => ObserverError::ObservationFailed {
+            | Self::LiveTraceesRemain
+            | Self::TraceeNotReaped { .. } => ObserverError::ObservationFailed {
                 reason: ObservationFailureReason::TraceInterrupted,
             },
         }
@@ -302,6 +319,17 @@ impl Display for TraceError {
             Self::Visitor => formatter.write_str("trace visitor rejected a stop"),
             Self::Sink(error) => write!(formatter, "{error}"),
             Self::LiveTraceesRemain => formatter.write_str("trace ended with live tracees"),
+            Self::TraceeNotReaped { tid, errno, prior } => {
+                if *errno == 0 {
+                    write!(formatter, "tracee {tid} was not reaped before the deadline")?;
+                } else {
+                    write!(formatter, "tracee {tid} was not reaped: errno {errno}")?;
+                }
+                if let Some(prior) = prior {
+                    write!(formatter, " after {prior}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -310,6 +338,9 @@ impl Error for TraceError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Sink(error) => Some(error),
+            Self::TraceeNotReaped {
+                prior: Some(error), ..
+            } => Some(error),
             _ => None,
         }
     }
@@ -387,6 +418,8 @@ pub enum TraceStop {
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error;
+
     use super::{ObservationGap, TraceError};
 
     #[test]
@@ -407,6 +440,30 @@ mod tests {
             }
             other => panic!("gap was dropped: {other}"),
         }
+        let observer = error.into_observer_error();
+        assert!(matches!(
+            observer,
+            drifti_observer::ObserverError::ObservationFailed {
+                reason: drifti_observer::ObservationFailureReason::TraceInterrupted,
+            }
+        ));
+    }
+
+    #[test]
+    fn unreaped_tracee_keeps_the_prior_failure_and_is_not_success() {
+        let error = TraceError::TraceeNotReaped {
+            tid: 9,
+            errno: 1,
+            prior: Some(Box::new(TraceError::Visitor)),
+        };
+        let text = error.to_string();
+        assert!(text.contains("not reaped"));
+        assert!(text.contains("visitor"));
+        assert!(!text.contains("COMPLETE"));
+        assert!(matches!(
+            error.source(),
+            Some(source) if source.to_string().contains("visitor")
+        ));
         let observer = error.into_observer_error();
         assert!(matches!(
             observer,

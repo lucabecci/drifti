@@ -22,6 +22,7 @@
 #![deny(unsafe_code)]
 
 mod abi;
+mod cleanup;
 mod error;
 mod lifecycle;
 mod lineage;
@@ -30,6 +31,7 @@ mod options;
 mod proc_status;
 mod report;
 mod syscall;
+mod syscall_info;
 mod wait_status;
 
 #[cfg(target_os = "linux")]

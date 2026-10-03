@@ -38,9 +38,15 @@ fn command(args: &[&str], current_dir: Option<&str>) -> CommandSpec {
 }
 
 fn env_tracee() -> &'static str {
-    // `cargo test` sets this to the fixture binary. Cross-check builds that
-    // do not link bins leave it unset; those builds do not run the test.
-    option_env!("CARGO_BIN_EXE_lifecycle_tracee").unwrap_or("lifecycle-tracee")
+    // Cargo sets `CARGO_BIN_EXE_<name>` from the manifest binary name and
+    // keeps its hyphens. The underscore form is unset, so `option_env` plus
+    // a bare name becomes a PATH lookup and `ENOENT`. `env!` fails the build
+    // when the fixture was not linked.
+    env!("CARGO_BIN_EXE_lifecycle-tracee")
+}
+
+fn env_tracer() -> &'static str {
+    env!("CARGO_BIN_EXE_lifecycle-tracer")
 }
 
 fn drive(args: &[&str]) -> drifti_observer_linux::TraceReport {
@@ -186,11 +192,10 @@ fn visitor_rejection_kills_the_tracee() {
 
 #[test]
 fn tracer_exit_kills_the_tracee() {
-    let output =
-        Command::new(option_env!("CARGO_BIN_EXE_lifecycle_tracer").unwrap_or("lifecycle-tracer"))
-            .arg(env_tracee())
-            .output()
-            .expect("tracer");
+    let output = Command::new(env_tracer())
+        .arg(env_tracee())
+        .output()
+        .expect("tracer");
     assert!(
         output.status.success(),
         "tracer failed: {}",

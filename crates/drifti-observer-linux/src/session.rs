@@ -9,9 +9,11 @@
 //! in the same process.
 //!
 //! `PTRACE_O_EXITKILL` is set on every tracee. Drop sends `SIGKILL` to
-//! tracees that are still live, so returning from a failed run does not
-//! leave them stopped. A tracer that exits without running Drop relies on
-//! the kernel option.
+//! tracees that are still live and reaps them, including a tracee left in
+//! ptrace-stop because the visitor returned before resume. A kill that does
+//! not reap the tracee is [`TraceError::TraceeNotReaped`] from `drive` and is
+//! not a successful report. A tracer that exits without running Drop relies
+//! on the kernel option.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{c_char, CString};
@@ -26,6 +28,7 @@ use std::time::{Duration, Instant};
 use drifti_observer::{CommandSpec, ExecutionId};
 
 use crate::abi::SIGSTOP;
+use crate::cleanup::{needs_kill_fallback, reap_step, PidfdSignal, ReapStep, REAP_BUDGET};
 use crate::error::{ObservationGap, TraceError, TraceStop};
 use crate::lifecycle::{apply_stop, ResumeAction, TraceVisitor};
 use crate::lineage::ThreadLineage;
@@ -33,6 +36,7 @@ use crate::options::TraceOptions;
 use crate::proc_status::{parse_tgid, MAX_PROC_STATUS};
 use crate::report::TraceReport;
 use crate::syscall::ParsedSyscall;
+use crate::syscall_info::{exit_syscall_info_need, syscall_info_covers};
 use crate::wait_status::{decode_wait_status, DecodedWait};
 
 /// Bounds for one session.
@@ -139,7 +143,7 @@ impl TraceSession {
         }
         note_proc_tgid(&mut lineage, root)?;
         let pid = guard.disarm();
-        let session = Self {
+        let mut session = Self {
             lineage,
             limits,
             options,
@@ -148,7 +152,9 @@ impl TraceSession {
             gaps_sent: 0,
             _lock,
         };
-        session.syscall_resume(pid, 0)?;
+        if let Err(error) = session.syscall_resume(pid, 0) {
+            return Err(session.fail_closed(error));
+        }
         Ok(session)
     }
 
@@ -160,7 +166,9 @@ impl TraceSession {
 
     /// Drives the session until every tracee has been reaped.
     pub fn drive<V: TraceVisitor>(mut self, visitor: &mut V) -> Result<TraceReport, TraceError> {
-        self.pump(visitor)?;
+        if let Err(error) = self.pump(visitor) {
+            return Err(self.fail_closed(error));
+        }
         self.finish()
     }
 
@@ -172,7 +180,6 @@ impl TraceSession {
             let raw = self.read_raw(pid, status)?;
             let applied = match apply_stop(&mut self.lineage, tid, raw) {
                 Err(TraceError::TraceeCapacity { tid: rejected }) => {
-                    self.kill_tid(rejected);
                     return Err(TraceError::TraceeCapacity { tid: rejected });
                 }
                 other => other?,
@@ -189,7 +196,7 @@ impl TraceSession {
 
     fn finish(mut self) -> Result<TraceReport, TraceError> {
         if self.lineage.live_count() != 0 {
-            return Err(TraceError::LiveTraceesRemain);
+            return Err(self.fail_closed(TraceError::LiveTraceesRemain));
         }
         let stops_delivered = self.stops_delivered;
         let execution_id = self.lineage.execution_id();
@@ -297,42 +304,72 @@ impl TraceSession {
         )
     }
 
-    fn kill_tid(&self, tid: u32) {
-        if let Some(fd) = self.pidfds.get(&tid) {
-            signal_pidfd(fd);
-            return;
+    /// Kills and reaps every live tracee, plus `extra` when it is not in the
+    /// lineage (a capacity rejection). A tid that is still alive is not marked
+    /// reaped.
+    fn terminate_ids(&mut self, extra: Option<u32>) -> Result<(), (u32, i32)> {
+        let mut tids: Vec<u32> = self.lineage.live_tids().collect();
+        if let Some(extra) = extra {
+            if !tids.contains(&extra) {
+                tids.push(extra);
+            }
         }
-        if let Ok(pid) = i32::try_from(tid) {
-            // SAFETY: `tid` was reported by the kernel for this session and
-            // could not be tracked. SIGKILL is cleanup, not a detach. When
-            // pidfd_open failed, the pid number can theoretically be reused;
-            // that case is recorded as `PidfdUnavailable` on the paths that
-            // opened a pidfd. This branch is the capacity rejection before a
-            // pidfd exists.
-            unsafe { libc::kill(pid, crate::abi::SIGKILL) };
+        let deadline = Instant::now() + REAP_BUDGET;
+        let mut failure: Option<(u32, i32)> = None;
+        for tid in tids {
+            let pid = match pid_of(tid) {
+                Ok(pid) => pid,
+                Err(_) => {
+                    failure.get_or_insert((tid, libc::EINVAL));
+                    continue;
+                }
+            };
+            let fd = self.pidfds.get(&tid).map(|slot| slot.0);
+            if let Err(errno) = signal_and_reap(pid, fd, deadline) {
+                failure.get_or_insert((tid, errno));
+                continue;
+            }
+            if self.lineage.record(tid).is_some() && self.lineage.mark_reaped(tid).is_err() {
+                failure.get_or_insert((tid, libc::EINVAL));
+            }
+        }
+        self.close_dead_pidfds();
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(()),
         }
     }
 
-    fn kill_live(&mut self) {
-        let live: Vec<u32> = self.lineage.live_tids().collect();
-        for tid in live {
-            self.kill_tid(tid);
-            if let Ok(pid) = pid_of(tid) {
-                let mut status = 0;
-                // SAFETY: this waits for the specific tracee just signaled.
-                // `__WALL` also collects clone threads. `WNOHANG` keeps Drop
-                // from blocking if the task is already gone.
-                unsafe {
-                    libc::waitpid(pid, &mut status, libc::WNOHANG | libc::__WALL);
-                }
-            }
+    /// Runs [`Self::terminate_ids`] and, when that fails, returns
+    /// [`TraceError::TraceeNotReaped`] without dropping `prior`.
+    fn fail_closed(&mut self, prior: TraceError) -> TraceError {
+        let extra = match &prior {
+            TraceError::TraceeCapacity { tid } => Some(*tid),
+            _ => None,
+        };
+        match self.terminate_ids(extra) {
+            Ok(()) => prior,
+            Err((tid, errno)) => TraceError::TraceeNotReaped {
+                tid,
+                errno,
+                prior: Some(Box::new(prior)),
+            },
         }
     }
 }
 
 impl Drop for TraceSession {
     fn drop(&mut self) {
-        self.kill_live();
+        // `drive` reports `TraceeNotReaped` when it still owns the session.
+        // This is the retry for that path and the only attempt when the
+        // session is dropped without `drive`. A failure is not marked reaped
+        // and does not build a report, so it is not `COMPLETE`.
+        match self.terminate_ids(None) {
+            Ok(()) => {}
+            Err((tid, errno)) => {
+                let _unreaped = (tid, errno);
+            }
+        }
     }
 }
 
@@ -372,19 +409,11 @@ impl Drop for ChildGuard {
         if !self.armed {
             return;
         }
-        // SAFETY: `pid` is the child created by `fork` for this launch. It is
-        // not yet owned by a `TraceSession`. SIGKILL plus `waitpid` reaps a
-        // failed launch so the child is not left stopped.
-        unsafe { libc::kill(self.pid, crate::abi::SIGKILL) };
-        let mut status = 0;
-        loop {
-            // SAFETY: waits only for this child. EINTR is retried. Any other
-            // error means the child is already gone.
-            let rc = unsafe { libc::waitpid(self.pid, &mut status, 0) };
-            if rc >= 0 || last_errno() != libc::EINTR {
-                break;
-            }
-        }
+        // The child may already be in the attach stop. A blocking `wait`
+        // without resume does not reap that stop. There is no report yet:
+        // the launch error is the caller's result.
+        let deadline = Instant::now() + REAP_BUDGET;
+        let _ = signal_and_reap(self.pid, None, deadline);
     }
 }
 
@@ -496,18 +525,118 @@ fn open_pidfd(pid: libc::pid_t) -> Result<PidFd, i32> {
     }
 }
 
-fn signal_pidfd(fd: &PidFd) {
-    // SAFETY: `fd.0` is an open pidfd owned by this session. `SIGKILL` is
+fn signal_pidfd(fd: RawFd) -> Result<(), i32> {
+    // SAFETY: `fd` is an open pidfd owned by this session. `SIGKILL` is
     // delivered to that pidfd's process, not to a reused pid number. A null
-    // siginfo asks the kernel to synthesize the signal. The flags argument is 0.
-    unsafe {
+    // siginfo asks the kernel to synthesize the signal. The flags argument
+    // is 0. The return value is checked by the caller.
+    let rc = unsafe {
         libc::syscall(
             libc::SYS_pidfd_send_signal,
-            fd.0,
+            fd,
             crate::abi::SIGKILL,
             std::ptr::null_mut::<libc::siginfo_t>(),
             0,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(last_errno())
+    }
+}
+
+fn classify_pidfd(fd: Option<RawFd>) -> PidfdSignal {
+    match fd {
+        None => PidfdSignal::Unavailable,
+        Some(fd) => match signal_pidfd(fd) {
+            Ok(()) => PidfdSignal::Sent,
+            Err(errno) if errno == libc::ESRCH => PidfdSignal::AlreadyGone,
+            Err(_) => PidfdSignal::Failed,
+        },
+    }
+}
+
+fn kill_pid(pid: libc::pid_t) -> Result<(), i32> {
+    // SAFETY: `pid` is a tracee of this session, or the child of a failed
+    // launch. `SIGKILL` is cleanup. When pidfd_open failed, the pid number
+    // can theoretically be reused; that miss is `PidfdUnavailable` on the
+    // paths that tried to open a pidfd. The caller checks the return value
+    // and does not treat a failure as a reap.
+    let rc = unsafe { libc::kill(pid, crate::abi::SIGKILL) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        let errno = last_errno();
+        if errno == libc::ESRCH {
+            Ok(())
+        } else {
+            Err(errno)
+        }
+    }
+}
+
+fn resume_killed(pid: libc::pid_t) {
+    // SAFETY: `pid` is a tracee of this session or the launch child.
+    // `PTRACE_CONT` with `SIGKILL` resumes a ptrace-stop and delivers a
+    // signal the tracee cannot block. A running or already-dead task makes
+    // `ptrace` fail; that failure is not a reap. The caller keeps waiting.
+    unsafe {
+        libc::ptrace(
+            libc::PTRACE_CONT,
+            pid,
+            std::ptr::null_mut::<libc::c_void>(),
+            crate::abi::SIGKILL as usize as *mut libc::c_void,
         );
+    }
+}
+
+fn signal_and_reap(pid: libc::pid_t, pidfd: Option<RawFd>, deadline: Instant) -> Result<(), i32> {
+    let signaled = classify_pidfd(pidfd);
+    let kill_result = if needs_kill_fallback(signaled) {
+        kill_pid(pid)
+    } else {
+        Ok(())
+    };
+    match (kill_result, reap_signaled(pid, deadline)) {
+        (_, Ok(())) => Ok(()),
+        (Err(errno), Err(_)) => Err(errno),
+        (Ok(()), Err(errno)) => Err(errno),
+    }
+}
+
+fn reap_signaled(pid: libc::pid_t, deadline: Instant) -> Result<(), i32> {
+    loop {
+        let mut status = 0;
+        // SAFETY: waits for this tracee only. `__WALL` also collects clone
+        // threads. `WNOHANG` keeps the deadline in this process. The status
+        // word is a local `i32`.
+        let rc = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG | libc::__WALL) };
+        if rc == pid {
+            match reap_step(Some(decode_wait_status(status))) {
+                ReapStep::Reaped => return Ok(()),
+                ReapStep::Resume => resume_killed(pid),
+            }
+        } else if rc == 0 {
+            debug_assert_eq!(reap_step(None), ReapStep::Resume);
+            resume_killed(pid);
+        } else {
+            let errno = last_errno();
+            if errno == libc::EINTR {
+                continue;
+            }
+            // `ECHILD` means this tracer has no such child left to wait for.
+            // A reused pid is not our child, so this is not a reason to
+            // signal that number again.
+            if errno == libc::ECHILD {
+                return Ok(());
+            }
+            return Err(errno);
+        }
+        if Instant::now() >= deadline {
+            return Err(0);
+        }
+        thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -565,12 +694,18 @@ fn read_parsed_syscall(pid: libc::pid_t) -> Result<ParsedSyscall, TraceError> {
             })
         }
         libc::PTRACE_SYSCALL_INFO_EXIT => {
-            let need = member + mem::size_of::<libc::__c_anonymous_ptrace_syscall_info_exit>();
-            if (wrote as usize) < need {
+            // The kernel returns `offsetofend(exit.is_error)` (33 on the
+            // 64-bit layout). `sizeof` of the `{ i64, u8 }` member is 16
+            // because of tail padding, and `member + 16` is 40, which rejects
+            // that write. `is_error` is the last required byte; a shorter
+            // write would leave the flag as the zeroed padding.
+            let need = exit_syscall_info_need();
+            if !syscall_info_covers(wrote, need) {
                 return Err(TraceError::SyscallInfoTruncated { wrote });
             }
-            // SAFETY: `op` is EXIT and `wrote` covers the exit member, so
-            // that is the member the kernel wrote.
+            // SAFETY: `op` is EXIT and `wrote` covers `sval` and `is_error`,
+            // so that is the member the kernel wrote. Tail padding past
+            // `is_error` is not part of the kernel's count and is not read.
             let exit = unsafe { info.u.exit };
             Ok(ParsedSyscall::Exit {
                 return_value: exit.sval,
