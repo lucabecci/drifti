@@ -16,7 +16,8 @@
 //! coverage yields `INDETERMINATE` unless an explicit deny matches. The
 //! engine does not infer coverage.
 //! [`contract`] is the version-1 contract document. Its version is mandatory.
-//! Parsing and compilation are later tasks.
+//! [`contract::parse_contract`] reads one document and rejects every other
+//! version. Compilation is a later task.
 //! [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]
