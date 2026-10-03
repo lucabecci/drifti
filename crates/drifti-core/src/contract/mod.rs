@@ -8,10 +8,13 @@
 //! Each action has `allow` and `deny` lists of authoring resources. Version 1
 //! is mandatory. [`parse_contract`] reads one document into this model and
 //! rejects every other version. It does not sort resources, resolve patterns
-//! into typed resources, or build a policy.
+//! into typed resources, or build a policy. [`compile_contract`] does that
+//! resolution and returns a typed policy value without accepting authority.
 
+mod compile;
 mod parse;
 
+pub use compile::{compile_contract, ContractCompileError};
 pub use parse::{parse_contract, ContractParseError, SourceLocation};
 
 use std::error::Error;
