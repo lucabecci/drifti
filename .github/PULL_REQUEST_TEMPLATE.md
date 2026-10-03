@@ -23,7 +23,9 @@ One task, one branch, one pull request. Omit this section only when no Jira task
 
 ## Test plan
 
-- [ ] Not applicable yet; this repository has no crate
+- [ ] `cargo fmt --all --check`
+- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- [ ] `cargo test --workspace --all-targets`
 - [ ] Docs and workflow files still match CONTRIBUTING.md
 
 ## Conventional Commits

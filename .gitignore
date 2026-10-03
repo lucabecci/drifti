@@ -13,10 +13,10 @@ Thumbs.db
 .env.*
 !.env.example
 
-# Rust build output, reserved for when the crate exists.
-# The toolchain is not initialized yet.
+# Rust build output.
 /target/
 **/*.rs.bk
+proptest-regressions/
 
 # Local observation traces from `drifti init` and `drifti observe`.
 # The capability contract (drifti.yaml) stays tracked.

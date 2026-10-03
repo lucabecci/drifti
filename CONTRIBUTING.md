@@ -2,7 +2,15 @@
 
 Thanks for your interest in Drifti. The project is authored and maintained by Luca Becci.
 
-Drifti is a local-first tool for capability contracts and drift detection. The CLI is not implemented yet, so contributions at this stage are documentation, governance, and workflow changes.
+Drifti is a local-first tool for capability contracts and drift detection. The portable domain crate `drifti-core` exists. The CLI is not implemented yet.
+
+## Build
+
+Rust 1.84 or newer. From the repository root:
+
+```sh
+cargo test --workspace --all-targets
+```
 
 ## License
 

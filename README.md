@@ -10,7 +10,15 @@ Authored and maintained by Luca Becci.
 
 ## Status
 
-The CLI is not implemented, and the Rust toolchain is not initialized. There is nothing to build or install.
+`drifti-core` is the portable domain crate. The CLI is not implemented, and the observer, store, and CLI crates are not created yet.
+
+## Build
+
+Requires Rust 1.84 or newer.
+
+```sh
+cargo test --workspace --all-targets
+```
 
 ## What it does
 

@@ -10,7 +10,7 @@ Drifti is a local-first developer tool for capability contracts and drift detect
 
 Drifti is a Rust developer-security tool for capability contracts and capability drift detection in AI agents. It is not an agent framework, a coding agent, a sandbox, or an observability product that stops at raw events. The core abstractions are the capability, the capability contract, and capability drift.
 
-The Rust toolchain is intentionally not initialized. Do not add `Cargo.toml`, `rust-toolchain.toml`, `src/`, `rustfmt.toml`, `clippy.toml`, crate directories, or other crate files unless the current task explicitly asks to initialize the crate. Do not implement `drifti` commands unless the task asks for that. Do not add a nested `AGENTS.md` until the crate it governs exists.
+`drifti-core` is initialized. Do not add other crate directories, `rust-toolchain.toml`, `rustfmt.toml`, or `clippy.toml` unless the current task explicitly asks. Do not implement `drifti` commands unless the task asks for that. Add a nested `AGENTS.md` only when that crate exists and its local constraints differ from this file.
 
 ## Source of truth
 
@@ -95,7 +95,7 @@ The MVP workspace is divided into:
 
 `drifti-core` must not depend on Linux APIs, ptrace, SQLite, or CLI rendering.
 
-These crates are the target layout. They are not created until a task explicitly initializes the Rust workspace.
+These crates are the target layout. `drifti-core` exists. The other crates are not created until a task explicitly initializes them.
 
 ## Product constraints
 
