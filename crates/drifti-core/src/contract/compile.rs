@@ -11,6 +11,11 @@
 //! [`CompiledPolicy`](crate::policy::CompiledPolicy) is a value the caller can
 //! hold. Compilation does not accept that value as authority, sort resources,
 //! widen a pattern, or render a terminal.
+//!
+//! Compiler errors name the field path, a bounded value, and the expected
+//! form. The compiler sees a document rather than a file, so it does not
+//! invent a filename. [`ContractCompileError::UnsupportedVersion`] is never
+//! version 1.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -25,7 +30,8 @@ use crate::resource::{
 
 use super::{
     AllowDenyRules, ContractDocument, ContractVersion, ALLOW_KEY, CONNECT_KEY, DENY_KEY,
-    EXECUTE_KEY, FILESYSTEM_KEY, LISTEN_KEY, NETWORK_KEY, PROCESS_KEY, READ_KEY, WRITE_KEY,
+    EXECUTE_KEY, FILESYSTEM_KEY, LISTEN_KEY, NETWORK_KEY, PROCESS_KEY, READ_KEY, VERSION_KEY,
+    WRITE_KEY,
 };
 
 const VALUE_LIMIT: usize = 80;
@@ -43,14 +49,26 @@ const PATTERN_FORM: &str = "an exact path or a final ** prefix";
 const INSIDE_FORM: &str = "a path that stays inside its root";
 /// A CIDR prefix that does not fit the address family.
 const PREFIX_FORM: &str = "a CIDR prefix that fits the address family";
+/// The only schema version compilation accepts.
+const VERSION_FORM: &str = "version 1";
 
 /// Failure while compiling a parsed contract.
+///
+/// The field path is the location. Values stored on the error are capped at
+/// 80 characters and have control characters replaced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContractCompileError {
     /// The document version is not version 1.
+    ///
+    /// This variant is not produced for version 1, so a caller cannot mistake
+    /// it for a successful version-1 compilation.
     UnsupportedVersion {
-        /// Numeric version from the document.
+        /// Field path. This is `version`.
+        field_path: &'static str,
+        /// Numeric version from the document. This is never 1.
         version: u32,
+        /// What compilation accepts.
+        expected: &'static str,
     },
     /// One authoring resource cannot become the action's typed resource.
     InvalidResource {
@@ -66,9 +84,13 @@ pub enum ContractCompileError {
 impl Display for ContractCompileError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedVersion { version } => write!(
+            Self::UnsupportedVersion {
+                field_path,
+                version,
+                expected,
+            } => write!(
                 formatter,
-                "unsupported contract version {version}; supported version is 1"
+                "unsupported contract version {version} at {field_path}; expected {expected}"
             ),
             Self::InvalidResource {
                 field_path,
@@ -108,8 +130,12 @@ pub fn compile_contract(
     document: &ContractDocument,
 ) -> Result<CompiledPolicy, ContractCompileError> {
     if document.version() != ContractVersion::V1 {
+        let version = document.version().get();
+        debug_assert_ne!(version, 1);
         return Err(ContractCompileError::UnsupportedVersion {
-            version: document.version().get(),
+            field_path: VERSION_KEY,
+            version,
+            expected: VERSION_FORM,
         });
     }
     let mut rules = Vec::new();
@@ -439,14 +465,16 @@ fn show_value(text: &str) -> String {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+    use std::num::NonZeroU32;
+
     use super::{
-        compile_contract, ContractCompileError, EXECUTABLE_FORM, FILE_FORM, INSIDE_FORM,
-        NETWORK_FORM, PATTERN_FORM, PREFIX_FORM,
+        compile_contract, show_value, ContractCompileError, EXECUTABLE_FORM, FILE_FORM,
+        INSIDE_FORM, NETWORK_FORM, PATTERN_FORM, PREFIX_FORM, VERSION_FORM,
     };
     use crate::capability::{Action, Capability};
     use crate::contract::{
         parse_contract, AllowDenyRules, AuthoringResource, ContractDocument, ContractVersion,
-        FilesystemContract, NetworkContract, ProcessContract,
+        FilesystemContract, NetworkContract, ProcessContract, VERSION_KEY,
     };
     use crate::policy::{Coverage, Decision, RuleEffect};
     use crate::resource::{
@@ -885,8 +913,8 @@ network:
             ),
         ];
 
-        for (document, field_path, value, expected) in cases {
-            let error = compile_contract(&document).expect_err(field_path);
+        for (rejected, field_path, value, expected) in cases {
+            let error = compile_contract(&rejected).expect_err(field_path);
             match &error {
                 ContractCompileError::InvalidResource {
                     field_path: got_path,
@@ -1227,5 +1255,88 @@ filesystem:
                 other => panic!("expected an executable, got {other:?}"),
             }
         }
+    }
+
+    fn assert_control_free(text: &str) {
+        assert!(!text.chars().any(char::is_control));
+        assert!(!text.contains('\0'));
+    }
+
+    #[test]
+    fn unsupported_version_is_a_dedicated_compiler_error() {
+        for number in [2_u32, 99] {
+            let version = ContractVersion {
+                value: NonZeroU32::new(number).expect("nonzero"),
+            };
+            assert_ne!(version, ContractVersion::V1);
+            assert_ne!(version.get(), 1);
+            let rejected = ContractDocument::new(
+                version,
+                FilesystemContract::new(rules(&["./src/**"], &[]), AllowDenyRules::empty()),
+                ProcessContract::new(AllowDenyRules::empty()),
+                NetworkContract::new(AllowDenyRules::empty(), AllowDenyRules::empty()),
+            );
+            let error = compile_contract(&rejected).expect_err("unsupported version");
+            match &error {
+                ContractCompileError::UnsupportedVersion {
+                    field_path,
+                    version,
+                    expected,
+                } => {
+                    assert_eq!(*field_path, VERSION_KEY);
+                    assert_eq!(*version, number);
+                    assert_ne!(*version, 1);
+                    assert_eq!(*expected, VERSION_FORM);
+                }
+                other => panic!("expected unsupported version, got {other:?}"),
+            }
+            let shown = error.to_string();
+            assert!(shown.contains(VERSION_KEY));
+            assert!(shown.contains(&number.to_string()));
+            assert!(shown.contains(VERSION_FORM));
+            assert!(shown.contains("unsupported"));
+            assert!(!shown.contains("interpreted"));
+            assert!(!shown.contains("drifti.yaml"));
+            assert_control_free(&shown);
+        }
+    }
+
+    #[test]
+    fn compiler_errors_bound_the_invalid_value_and_hide_controls() {
+        let hostile = format!("\u{0007}\n./src/*{}", "a".repeat(90));
+        assert!(hostile.contains('\n'));
+        assert!(hostile.contains('\u{0007}'));
+        let rejected = document(
+            rules(&[&hostile], &[]),
+            AllowDenyRules::empty(),
+            AllowDenyRules::empty(),
+            AllowDenyRules::empty(),
+            AllowDenyRules::empty(),
+        );
+        let error = compile_contract(&rejected).expect_err("hostile resource");
+        match &error {
+            ContractCompileError::InvalidResource {
+                field_path,
+                value,
+                expected,
+            } => {
+                assert_eq!(field_path, "filesystem.read.allow[0]");
+                assert_eq!(*expected, PATTERN_FORM);
+                assert!(value.starts_with('\u{FFFD}'));
+                assert!(value.ends_with("..."));
+                assert_eq!(value.chars().count(), 83);
+                assert_control_free(value);
+            }
+            other => panic!("expected an invalid resource, got {other:?}"),
+        }
+        let shown = error.to_string();
+        assert!(shown.contains("filesystem.read.allow[0]"));
+        assert!(shown.contains(PATTERN_FORM));
+        assert_control_free(&shown);
+        assert!(!shown.contains("drifti.yaml"));
+
+        let with_nul = show_value("a\0b\u{0001}");
+        assert_eq!(with_nul, "a\u{FFFD}b\u{FFFD}");
+        assert_control_free(&with_nul);
     }
 }
