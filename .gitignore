@@ -1,0 +1,23 @@
+# Operating system
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Rust build output, reserved for when the crate exists.
+# The toolchain is not initialized yet.
+/target/
+**/*.rs.bk
+
+# Local observation traces from `drifti init` and `drifti observe`.
+# The capability contract (drifti.yaml) stays tracked.
+.drifti/

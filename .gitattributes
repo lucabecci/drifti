@@ -1,0 +1,7 @@
+* text=auto eol=lf
+
+*.md text linguist-language=Markdown
+*.rs text linguist-language=Rust
+
+LICENSE-APACHE linguist-detectable=false
+LICENSE-MIT linguist-detectable=false
