@@ -10,6 +10,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
+- SPEC-002 evaluation matrix for allow, deny, unknown, action mismatch, resource-domain mismatch, and indeterminate coverage in `drifti-core`.
 - Coverage-aware policy evaluation: non-complete coverage returns `INDETERMINATE` and cannot become `ALLOWED`, while an explicit deny still wins, in `drifti-core`.
 - Deterministic policy evaluation with deny-over-allow precedence in `drifti-core`.
 - Exact and recursive-prefix policy rule matching in `drifti-core`.

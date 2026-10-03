@@ -1026,4 +1026,120 @@ mod tests {
             )
             .expect("coverage");
     }
+
+    #[test]
+    fn spec_002_evaluation_matrix_covers_every_required_case() {
+        let exact = Rule::allow(rule_id("allow-exact"), repo_read("src/lib.rs"));
+        let prefix = Rule::allow(rule_id("allow-prefix"), repo_read("src/**"));
+        let deny = Rule::deny(rule_id("deny-secret"), repo_read("src/secret.env"));
+        let executable =
+            Capability::process_execute(ExecutableResource::new("git").expect("executable"));
+        let address = NetworkAddress::ip(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)));
+        let network =
+            Capability::network_connect(NetworkResource::new(NetworkProtocol::Tcp, address, 443));
+        let execute_rule = Rule::allow(rule_id("allow-git"), executable.clone());
+        let network_rule = Rule::deny(rule_id("deny-net"), network.clone());
+
+        let exact_allow =
+            CompiledPolicy::new(vec![exact.clone()]).evaluate_complete(&repo_read("src/lib.rs"));
+        assert_eq!(exact_allow.decision(), Decision::Allowed);
+        assert_eq!(exact_allow.reason(), None);
+        assert_eq!(exact_allow.matched_rules()[0].id().as_str(), "allow-exact");
+        assert_eq!(exact_allow.matched_rules()[0].effect(), RuleEffect::Allow);
+        assert_eq!(
+            CompiledPolicy::new(vec![exact]).evaluate_complete(&repo_read("src/main.rs")),
+            Evaluation::unknown()
+        );
+
+        let prefix_allow =
+            CompiledPolicy::new(vec![prefix.clone()]).evaluate_complete(&repo_read("src/main.rs"));
+        assert_eq!(prefix_allow.decision(), Decision::Allowed);
+        assert_eq!(prefix_allow.matched_rules().len(), 1);
+        assert_eq!(
+            prefix_allow.matched_rules()[0].id().as_str(),
+            "allow-prefix"
+        );
+        assert_ne!(prefix_allow.decision(), Decision::Denied);
+
+        let deny_over_allow = CompiledPolicy::new(vec![prefix.clone(), deny])
+            .evaluate_complete(&repo_read("src/secret.env"));
+        assert_eq!(deny_over_allow.decision(), Decision::Denied);
+        assert_eq!(deny_over_allow.reason(), None);
+        assert_eq!(deny_over_allow.matched_rules().len(), 1);
+        assert_eq!(
+            deny_over_allow.matched_rules()[0].id().as_str(),
+            "deny-secret"
+        );
+        assert_eq!(
+            deny_over_allow.matched_rules()[0].effect(),
+            RuleEffect::Deny
+        );
+        assert_ne!(deny_over_allow.decision(), Decision::Allowed);
+
+        let unknown = CompiledPolicy::new(vec![prefix.clone()])
+            .evaluate_complete(&repo_read("docs/readme.md"));
+        assert_eq!(unknown, Evaluation::unknown());
+        assert_ne!(unknown.decision(), Decision::Denied);
+        assert_ne!(unknown.decision(), Decision::Allowed);
+        assert_ne!(
+            unknown.reason(),
+            Some(EvaluationReason::InsufficientCoverage)
+        );
+
+        let action_mismatch =
+            CompiledPolicy::new(vec![prefix.clone()]).evaluate_complete(&repo_write("src/lib.rs"));
+        assert_eq!(action_mismatch, Evaluation::unknown());
+        assert_ne!(action_mismatch.decision(), Decision::Denied);
+        assert_ne!(action_mismatch.decision(), Decision::Allowed);
+
+        let file_allow = Rule::allow(rule_id("allow-file"), repo_read("src/**"));
+        let file_deny = Rule::deny(rule_id("deny-file"), repo_read("**"));
+        let file_capability = repo_read("src/lib.rs");
+        let domain_pairs = [
+            (vec![execute_rule.clone()], file_capability.clone()),
+            (vec![network_rule.clone()], file_capability.clone()),
+            (
+                vec![file_allow.clone(), file_deny.clone()],
+                executable.clone(),
+            ),
+            (vec![network_rule.clone()], executable.clone()),
+            (vec![file_allow.clone(), file_deny.clone()], network.clone()),
+            (vec![execute_rule.clone()], network.clone()),
+        ];
+        for (rules, capability) in domain_pairs {
+            let mismatch = CompiledPolicy::new(rules).evaluate_complete(&capability);
+            assert_eq!(mismatch, Evaluation::unknown());
+            assert_ne!(mismatch.decision(), Decision::Denied);
+            assert_ne!(mismatch.decision(), Decision::Allowed);
+        }
+        let same_file = CompiledPolicy::new(vec![file_allow]).evaluate_complete(&file_capability);
+        assert_eq!(same_file.decision(), Decision::Allowed);
+        let denied_file = CompiledPolicy::new(vec![file_deny]).evaluate_complete(&file_capability);
+        assert_eq!(denied_file.decision(), Decision::Denied);
+        let same_executable =
+            CompiledPolicy::new(vec![execute_rule]).evaluate_complete(&executable);
+        assert_eq!(same_executable.decision(), Decision::Allowed);
+        assert_eq!(
+            same_executable.matched_rules()[0].id().as_str(),
+            "allow-git"
+        );
+        let denied_network = CompiledPolicy::new(vec![network_rule]).evaluate_complete(&network);
+        assert_eq!(denied_network.decision(), Decision::Denied);
+        assert_eq!(denied_network.matched_rules()[0].id().as_str(), "deny-net");
+
+        let allow_policy =
+            CompiledPolicy::new(vec![Rule::allow(rule_id("allow-src"), repo_read("src/**"))]);
+        for coverage in [Coverage::Incomplete, Coverage::Unsupported] {
+            let indeterminate = allow_policy.evaluate(&repo_read("src/lib.rs"), coverage);
+            assert_eq!(indeterminate, Evaluation::indeterminate());
+            assert_eq!(
+                indeterminate.reason(),
+                Some(EvaluationReason::InsufficientCoverage)
+            );
+            assert!(indeterminate.matched_rules().is_empty());
+            assert_ne!(indeterminate.decision(), Decision::Allowed);
+            assert_ne!(indeterminate.decision(), Decision::Unknown);
+            assert_ne!(indeterminate.decision(), Decision::Denied);
+        }
+    }
 }
