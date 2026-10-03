@@ -15,3 +15,4 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 ### Changed
 
 - Require Jira project KAN as the execution source for implementation tasks, including claim, review phases, and promotion of unblocked successors.
+- Require one Jira-linked branch and pull request per implementation task, with a dedicated worktree for parallel work.
