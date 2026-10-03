@@ -5,7 +5,10 @@
 //! it matches [`drifti_observer::coverage::DomainObservation`] using only this crate.
 
 use drifti_observer::coverage::DomainObservation;
-use drifti_observer::{CapabilityDomain, CoverageError, ExecutionCoverage, ObservationCoverage};
+use drifti_observer::{
+    CapabilityDomain, CommandSpec, CoverageError, EventSink, ExecutionCoverage, ExecutionId,
+    ExecutionResult, ObservationCoverage, Observer, ObserverCapabilities, ObserverError,
+};
 
 #[test]
 fn observation_coverage_round_trips_screaming_snake_case() {
@@ -52,8 +55,12 @@ fn no_events_seen_is_incomplete_and_not_unsupported() {
     assert_ne!(coverage.status(), ObservationCoverage::Unsupported);
     assert_ne!(coverage.status(), ObservationCoverage::Complete);
 
+    let advertised = ObserverCapabilities::new(CapabilityDomain::ALL);
     for domain in CapabilityDomain::ALL {
-        assert_eq!(coverage.domain(domain), DomainObservation::NotObserved);
+        assert_eq!(
+            coverage.domain(&advertised, domain),
+            DomainObservation::NotObserved
+        );
     }
 
     let encoded = serde_json::to_value(&coverage).expect("serialize absence");
@@ -86,38 +93,42 @@ fn absence_from_events<T>(events: &[T]) -> ExecutionCoverage {
 
 #[test]
 fn unsupported_domain_stays_distinct_from_a_domain_that_was_not_seen() {
+    let advertised = ObserverCapabilities::new(CapabilityDomain::ALL);
     let partial =
         ExecutionCoverage::declared(ObservationCoverage::Incomplete, [CapabilityDomain::Network])
             .expect("partial declaration");
 
     assert_eq!(
-        partial.domain(CapabilityDomain::Network),
+        partial.domain(&advertised, CapabilityDomain::Network),
         DomainObservation::Unsupported
     );
     assert_eq!(
-        partial.domain(CapabilityDomain::Filesystem),
+        partial.domain(&advertised, CapabilityDomain::Filesystem),
         DomainObservation::NotObserved
     );
     assert_ne!(
-        partial.domain(CapabilityDomain::Network),
-        partial.domain(CapabilityDomain::Filesystem)
+        partial.domain(&advertised, CapabilityDomain::Network),
+        partial.domain(&advertised, CapabilityDomain::Filesystem)
     );
 
     let execution_unsupported =
         ExecutionCoverage::declared(ObservationCoverage::Unsupported, []).expect("unsupported");
     assert_eq!(
-        execution_unsupported.domain(CapabilityDomain::Process),
+        execution_unsupported.domain(&advertised, CapabilityDomain::Process),
         DomainObservation::Unsupported
     );
     assert_ne!(
-        execution_unsupported.domain(CapabilityDomain::Process),
-        ExecutionCoverage::no_events_seen().domain(CapabilityDomain::Process)
+        execution_unsupported.domain(&advertised, CapabilityDomain::Process),
+        ExecutionCoverage::no_events_seen().domain(&advertised, CapabilityDomain::Process)
     );
 
     let complete =
         ExecutionCoverage::declared(ObservationCoverage::Complete, []).expect("complete");
     for domain in CapabilityDomain::ALL {
-        assert_eq!(complete.domain(domain), DomainObservation::Covered);
+        assert_eq!(
+            complete.domain(&advertised, domain),
+            DomainObservation::Covered
+        );
     }
 }
 
@@ -154,13 +165,18 @@ fn higher_layer_matches_domain_observation_without_a_platform_backend() {
         ),
     ];
 
+    let advertised = ObserverCapabilities::new(CapabilityDomain::ALL);
     for (coverage, domain, expected) in cases {
-        assert_eq!(classify_domain(&coverage, domain), expected);
+        assert_eq!(classify_domain(&coverage, &advertised, domain), expected);
     }
 }
 
-fn classify_domain(coverage: &ExecutionCoverage, domain: CapabilityDomain) -> &'static str {
-    match coverage.domain(domain) {
+fn classify_domain(
+    coverage: &ExecutionCoverage,
+    capabilities: &ObserverCapabilities,
+    domain: CapabilityDomain,
+) -> &'static str {
+    match coverage.domain(capabilities, domain) {
         drifti_observer::coverage::DomainObservation::Covered => "covered",
         drifti_observer::coverage::DomainObservation::NotObserved => "not_observed",
         drifti_observer::coverage::DomainObservation::Unsupported => "unsupported",
@@ -168,7 +184,7 @@ fn classify_domain(coverage: &ExecutionCoverage, domain: CapabilityDomain) -> &'
 }
 
 #[test]
-fn status_degrade_keeps_incomplete_distinct_from_unsupported() {
+fn status_degrade_keeps_unsupported_when_folded_with_incomplete() {
     for left in ObservationCoverage::ALL {
         for right in ObservationCoverage::ALL {
             let degraded = left.degrade(right);
@@ -198,15 +214,36 @@ fn status_degrade_keeps_incomplete_distinct_from_unsupported() {
     );
     assert_eq!(
         ObservationCoverage::Incomplete.degrade(ObservationCoverage::Unsupported),
-        ObservationCoverage::Incomplete
+        ObservationCoverage::Unsupported
     );
     assert_eq!(
         ObservationCoverage::Unsupported.degrade(ObservationCoverage::Incomplete),
         ObservationCoverage::Unsupported
     );
-    assert_ne!(
+    assert_eq!(
         ObservationCoverage::Incomplete.degrade(ObservationCoverage::Unsupported),
         ObservationCoverage::Unsupported.degrade(ObservationCoverage::Incomplete)
+    );
+
+    let advertised = ObserverCapabilities::new(CapabilityDomain::ALL);
+    let from_incomplete =
+        ExecutionCoverage::no_events_seen().degrade_status(ObservationCoverage::Unsupported);
+    assert_eq!(from_incomplete.status(), ObservationCoverage::Unsupported);
+    assert_eq!(
+        from_incomplete.domain(&advertised, CapabilityDomain::Filesystem),
+        DomainObservation::Unsupported
+    );
+    assert_ne!(
+        from_incomplete.domain(&advertised, CapabilityDomain::Filesystem),
+        DomainObservation::NotObserved
+    );
+    let from_unsupported =
+        ExecutionCoverage::declared(ObservationCoverage::Unsupported, []).expect("unsupported");
+    let folded = from_unsupported.degrade_status(ObservationCoverage::Incomplete);
+    assert_eq!(folded.status(), from_incomplete.status());
+    assert_eq!(
+        folded.domain(&advertised, CapabilityDomain::Network),
+        DomainObservation::Unsupported
     );
 }
 
@@ -245,12 +282,13 @@ fn degrade_status_does_not_invent_complete_coverage() {
         .degrade_status(ObservationCoverage::Complete);
     assert_eq!(stayed.status(), ObservationCoverage::Incomplete);
     assert!(!stayed.is_complete());
+    let advertised = ObserverCapabilities::new(CapabilityDomain::ALL);
     assert_eq!(
-        stayed.domain(CapabilityDomain::Network),
+        stayed.domain(&advertised, CapabilityDomain::Network),
         DomainObservation::Unsupported
     );
     assert_eq!(
-        stayed.domain(CapabilityDomain::Filesystem),
+        stayed.domain(&advertised, CapabilityDomain::Filesystem),
         DomainObservation::NotObserved
     );
 
@@ -273,4 +311,69 @@ fn degrade_status_does_not_invent_complete_coverage() {
             .status(),
         ObservationCoverage::Unsupported
     );
+}
+
+#[test]
+fn complete_does_not_cover_a_domain_the_observer_did_not_advertise() {
+    let capabilities = FilesystemOnly.capabilities();
+    assert!(capabilities.observes(CapabilityDomain::Filesystem));
+    assert!(!capabilities.observes(CapabilityDomain::Network));
+
+    let complete =
+        ExecutionCoverage::declared(ObservationCoverage::Complete, []).expect("complete");
+    assert_eq!(
+        complete.domain(&capabilities, CapabilityDomain::Filesystem),
+        DomainObservation::Covered
+    );
+    assert_eq!(
+        complete.domain(&capabilities, CapabilityDomain::Network),
+        DomainObservation::Unsupported
+    );
+    assert_ne!(
+        complete.domain(&capabilities, CapabilityDomain::Network),
+        DomainObservation::Covered
+    );
+    assert_ne!(
+        complete.domain(&capabilities, CapabilityDomain::Network),
+        DomainObservation::NotObserved
+    );
+
+    let absent = ExecutionCoverage::no_events_seen();
+    assert_eq!(
+        absent.domain(&capabilities, CapabilityDomain::Filesystem),
+        DomainObservation::NotObserved
+    );
+    assert_eq!(
+        absent.domain(&capabilities, CapabilityDomain::Network),
+        DomainObservation::Unsupported
+    );
+    assert_ne!(
+        absent.domain(&capabilities, CapabilityDomain::Network),
+        DomainObservation::NotObserved
+    );
+}
+
+struct FilesystemOnly;
+
+impl Observer for FilesystemOnly {
+    fn capabilities(&self) -> ObserverCapabilities {
+        ObserverCapabilities::new([CapabilityDomain::Filesystem])
+    }
+
+    fn run(
+        &self,
+        _command: CommandSpec,
+        sink: EventSink,
+    ) -> (EventSink, Result<ExecutionResult, ObserverError>) {
+        let coverage =
+            ExecutionCoverage::declared(ObservationCoverage::Complete, []).expect("complete");
+        (
+            sink,
+            Ok(ExecutionResult::new(
+                ExecutionId::from_raw(1),
+                coverage,
+                Some(0),
+            )),
+        )
+    }
 }
