@@ -10,6 +10,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
+- Deterministic resource containment in `drifti-core`, including exact matches and recursive filesystem prefixes.
 - Filesystem anchors and lexical path normalization in `drifti-core`.
 - Typed MVP capability actions and resources in `drifti-core`.
 - `drifti-core` crate skeleton, serde boundary, and architecture test harness.

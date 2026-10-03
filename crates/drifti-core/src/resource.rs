@@ -5,8 +5,9 @@
 //!
 //! A file resource records an anchor and a normalized path. Equivalent paths
 //! share one form, and a path that leaves its anchor is not stored there.
-//! An executable resource records its identity text as supplied. A network
-//! resource records a transport, an IP address or CIDR, and a port.
+//! A final `**` component is a recursive prefix, not a glob. An executable
+//! resource records its identity text as supplied. A network resource records
+//! a transport, an IP address or CIDR, and a port.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -132,19 +133,23 @@ impl FileResource {
         let supplied = host_path.into();
         validate_text(&supplied, ResourceError::EmptyFilePath)?;
         let absolute = resolve_host(roots, &supplied)?;
-        Ok(classify(roots, &absolute))
+        let pattern = path_pattern(&absolute);
+        Ok(classify(roots, pattern.base, pattern.recursive))
     }
 
-    /// Absolute host path of this resource under the given roots.
+    /// Host path of this resource under the given roots.
+    ///
+    /// A recursive prefix returns its directory, without the `**` marker.
     #[must_use]
     pub fn host_path(&self, roots: &FilesystemRoots) -> String {
+        let base = path_pattern(&self.file_path).base;
         let root = match self.anchor {
             FilesystemAnchor::Repo => roots.repo(),
             FilesystemAnchor::Home => roots.home(),
             FilesystemAnchor::Temp => roots.temp(),
-            FilesystemAnchor::Absolute => return self.file_path.clone(),
+            FilesystemAnchor::Absolute => return base.to_owned(),
         };
-        join_root(root, &self.file_path)
+        join_root(root, base)
     }
 
     /// Anchor that owns this file.
@@ -154,9 +159,38 @@ impl FileResource {
     }
 
     /// Normalized path text.
+    ///
+    /// A recursive prefix keeps a final `**` component, as in `src/**`.
     #[must_use]
     pub fn file_path(&self) -> &str {
         &self.file_path
+    }
+
+    /// Whether the path is a recursive prefix.
+    #[must_use]
+    pub fn is_recursive(&self) -> bool {
+        path_pattern(&self.file_path).recursive
+    }
+
+    /// Whether this file covers `other`.
+    ///
+    /// An exact path covers only itself. A recursive prefix covers that path
+    /// and every path under it, including a narrower recursive prefix. A
+    /// different anchor is never covered. A literal `*` component is not a glob.
+    #[must_use]
+    pub fn contains(&self, other: &Self) -> bool {
+        if self.anchor != other.anchor {
+            return false;
+        }
+        let parent = path_pattern(&self.file_path);
+        let child = path_pattern(&other.file_path);
+        let parent_parts = path_components(parent.base);
+        let child_parts = path_components(child.base);
+        if parent.recursive {
+            child_parts.starts_with(&parent_parts)
+        } else {
+            !child.recursive && parent_parts == child_parts
+        }
     }
 }
 
@@ -352,6 +386,21 @@ impl Resource {
             Self::Network(_) => ResourceKind::Network,
         }
     }
+
+    /// Whether this resource covers `other`.
+    ///
+    /// Different resource families never cover each other. Executable and
+    /// network coverage is exact equality. File coverage follows
+    /// [`FileResource::contains`].
+    #[must_use]
+    pub fn contains(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::File(parent), Self::File(child)) => parent.contains(child),
+            (Self::Executable(parent), Self::Executable(child)) => parent == child,
+            (Self::Network(parent), Self::Network(child)) => parent == child,
+            _ => false,
+        }
+    }
 }
 
 /// Which resource family a value belongs to.
@@ -393,6 +442,8 @@ pub enum ResourceError {
     NotRelative,
     /// `abs://` or a filesystem root was given a relative path.
     NotAbsolute,
+    /// `**` appeared before another path component.
+    MisplacedRecursiveMarker,
     /// CIDR prefix does not fit the address family.
     PrefixOutOfRange {
         /// Rejected prefix length.
@@ -413,6 +464,9 @@ impl Display for ResourceError {
             Self::EscapesAnchor => formatter.write_str("path leaves its filesystem anchor"),
             Self::NotRelative => formatter.write_str("anchored file path must stay relative"),
             Self::NotAbsolute => formatter.write_str("absolute file path must start with /"),
+            Self::MisplacedRecursiveMarker => {
+                formatter.write_str("recursive marker ** is only valid as the final path component")
+            }
             Self::PrefixOutOfRange {
                 prefix_length,
                 maximum,
@@ -428,30 +482,18 @@ impl Error for ResourceError {}
 
 fn absolute_root(text: String) -> Result<String, ResourceError> {
     validate_text(&text, ResourceError::NotAbsolute)?;
-    normalize_absolute(&text)
+    let normalized = normalize_absolute(&text)?;
+    if path_pattern(&normalized).recursive {
+        return Err(ResourceError::MisplacedRecursiveMarker);
+    }
+    Ok(normalized)
 }
 
 fn normalize_relative(text: &str) -> Result<String, ResourceError> {
     if text.starts_with('/') || text.starts_with('\\') {
         return Err(ResourceError::NotRelative);
     }
-    let mut stack = Vec::new();
-    for component in text.split(['/', '\\']) {
-        match component {
-            "" | "." => {}
-            ".." => {
-                if stack.pop().is_none() {
-                    return Err(ResourceError::EscapesAnchor);
-                }
-            }
-            other => stack.push(other),
-        }
-    }
-    if stack.is_empty() {
-        Ok(".".to_owned())
-    } else {
-        Ok(stack.join("/"))
-    }
+    normalize_components(text, false)
 }
 
 fn normalize_absolute(text: &str) -> Result<String, ResourceError> {
@@ -459,20 +501,103 @@ fn normalize_absolute(text: &str) -> Result<String, ResourceError> {
     if !unified.starts_with('/') {
         return Err(ResourceError::NotAbsolute);
     }
+    normalize_components(&unified, true)
+}
+
+fn normalize_components(text: &str, absolute: bool) -> Result<String, ResourceError> {
     let mut stack = Vec::new();
-    for component in unified.split('/') {
+    let mut recursive = false;
+    let parts: Vec<&str> = text.split(['/', '\\']).collect();
+    for (index, component) in parts.iter().copied().enumerate() {
         match component {
             "" | "." => {}
             ".." => {
-                stack.pop();
+                if absolute {
+                    stack.pop();
+                } else if stack.pop().is_none() {
+                    return Err(ResourceError::EscapesAnchor);
+                }
+            }
+            "**" => {
+                let rest_is_empty = parts[index + 1..]
+                    .iter()
+                    .all(|part| part.is_empty() || *part == ".");
+                if !rest_is_empty {
+                    return Err(ResourceError::MisplacedRecursiveMarker);
+                }
+                recursive = true;
+                break;
             }
             other => stack.push(other),
         }
     }
-    if stack.is_empty() {
-        Ok("/".to_owned())
+    Ok(canonical_path(&stack, absolute, recursive))
+}
+
+fn canonical_path(stack: &[&str], absolute: bool, recursive: bool) -> String {
+    let base = if stack.is_empty() {
+        if absolute {
+            "/".to_owned()
+        } else {
+            ".".to_owned()
+        }
+    } else if absolute {
+        format!("/{}", stack.join("/"))
     } else {
-        Ok(format!("/{}", stack.join("/")))
+        stack.join("/")
+    };
+    marked(base, recursive)
+}
+
+fn marked(base: String, recursive: bool) -> String {
+    if !recursive {
+        return base;
+    }
+    match base.as_str() {
+        "." => "**".to_owned(),
+        "/" => "/**".to_owned(),
+        _ => format!("{base}/**"),
+    }
+}
+
+struct PathPattern<'a> {
+    base: &'a str,
+    recursive: bool,
+}
+
+fn path_pattern(file_path: &str) -> PathPattern<'_> {
+    if file_path == "**" {
+        return PathPattern {
+            base: ".",
+            recursive: true,
+        };
+    }
+    if file_path == "/**" {
+        return PathPattern {
+            base: "/",
+            recursive: true,
+        };
+    }
+    match file_path.rsplit_once('/') {
+        Some((dir, "**")) if !dir.is_empty() => PathPattern {
+            base: dir,
+            recursive: true,
+        },
+        _ => PathPattern {
+            base: file_path,
+            recursive: false,
+        },
+    }
+}
+
+fn path_components(base: &str) -> Vec<&str> {
+    if base == "." || base == "/" {
+        Vec::new()
+    } else {
+        base.trim_start_matches('/')
+            .split('/')
+            .filter(|component| !component.is_empty())
+            .collect()
     }
 }
 
@@ -496,7 +621,7 @@ fn join_root(root: &str, relative: &str) -> String {
     }
 }
 
-fn classify(roots: &FilesystemRoots, absolute: &str) -> FileResource {
+fn classify(roots: &FilesystemRoots, absolute: &str, recursive: bool) -> FileResource {
     let candidates = [
         (FilesystemAnchor::Repo, roots.repo()),
         (FilesystemAnchor::Temp, roots.temp()),
@@ -514,10 +639,13 @@ fn classify(roots: &FilesystemRoots, absolute: &str) -> FileResource {
         }
     }
     match best {
-        Some((anchor, file_path)) => FileResource { anchor, file_path },
+        Some((anchor, file_path)) => FileResource {
+            anchor,
+            file_path: marked(file_path, recursive),
+        },
         None => FileResource {
             anchor: FilesystemAnchor::Absolute,
-            file_path: absolute.to_owned(),
+            file_path: marked(absolute.to_owned(), recursive),
         },
     }
 }
@@ -779,5 +907,208 @@ mod tests {
                 }
             })
             .expect("property");
+    }
+
+    fn file(anchor: FilesystemAnchor, path: &str) -> FileResource {
+        FileResource::new(anchor, path).expect("file")
+    }
+
+    #[test]
+    fn recursive_prefix_is_normalized_once() {
+        let prefix = file(FilesystemAnchor::Repo, "src/./domain/../**");
+        assert_eq!(prefix.file_path(), "src/**");
+        assert!(prefix.is_recursive());
+        let again = FileResource::new(prefix.anchor(), prefix.file_path()).expect("again");
+        assert_eq!(prefix, again);
+        assert_eq!(file(FilesystemAnchor::Repo, "**").file_path(), "**");
+        assert_eq!(
+            file(FilesystemAnchor::Absolute, "/etc/**").file_path(),
+            "/etc/**"
+        );
+        assert_eq!(file(FilesystemAnchor::Absolute, "/**").file_path(), "/**");
+        assert!(!file(FilesystemAnchor::Repo, "src/*").is_recursive());
+    }
+
+    #[test]
+    fn misplaced_recursive_marker_is_rejected() {
+        assert_eq!(
+            FileResource::new(FilesystemAnchor::Repo, "src/**/lib.rs"),
+            Err(ResourceError::MisplacedRecursiveMarker)
+        );
+        assert_eq!(
+            FileResource::new(FilesystemAnchor::Repo, "src/**/**"),
+            Err(ResourceError::MisplacedRecursiveMarker)
+        );
+        assert_eq!(
+            FileResource::new(FilesystemAnchor::Absolute, "/etc/**/passwd"),
+            Err(ResourceError::MisplacedRecursiveMarker)
+        );
+        assert_eq!(
+            FilesystemRoots::new("/work/**", "/home", "/tmp"),
+            Err(ResourceError::MisplacedRecursiveMarker)
+        );
+    }
+
+    #[test]
+    fn recursive_prefix_containment_follows_the_spec_examples() {
+        let root = file(FilesystemAnchor::Repo, "**");
+        let src = file(FilesystemAnchor::Repo, "src/**");
+        let domain = file(FilesystemAnchor::Repo, "src/domain/**");
+        let nested = file(FilesystemAnchor::Repo, "src/domain/mod.rs");
+        assert!(src.contains(&domain));
+        assert!(domain.contains(&nested));
+        assert!(root.contains(&src));
+        assert!(root.contains(&domain));
+        assert!(!domain.contains(&src));
+        assert!(!nested.contains(&domain));
+        assert!(src.contains(&file(FilesystemAnchor::Repo, "src")));
+        assert!(!file(FilesystemAnchor::Repo, "src").contains(&nested));
+        assert!(!src.contains(&file(FilesystemAnchor::Repo, "srcdir/lib.rs")));
+        assert!(!file(FilesystemAnchor::Repo, "src/*").contains(&nested));
+    }
+
+    #[test]
+    fn containment_does_not_cross_anchors_or_resource_families() {
+        let repo = file(FilesystemAnchor::Repo, "src/**");
+        let home = file(FilesystemAnchor::Home, "src/lib.rs");
+        assert!(!repo.contains(&home));
+        assert!(!home.contains(&repo));
+
+        let executable = ExecutableResource::new("git").expect("executable");
+        let other_executable = ExecutableResource::new("git-lfs").expect("executable");
+        let network = NetworkResource::new(
+            NetworkProtocol::Tcp,
+            NetworkAddress::ip(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            443,
+        );
+        let other_network = NetworkResource::new(network.protocol(), network.address(), 80);
+        let file_resource = Resource::File(repo);
+        let executable_resource = Resource::Executable(executable.clone());
+        let network_resource = Resource::Network(network);
+
+        assert!(file_resource.contains(&file_resource));
+        assert!(executable_resource.contains(&Resource::Executable(executable)));
+        assert!(!executable_resource.contains(&Resource::Executable(other_executable)));
+        assert!(network_resource.contains(&network_resource));
+        assert!(!network_resource.contains(&Resource::Network(other_network)));
+        for left in [&file_resource, &executable_resource, &network_resource] {
+            for right in [&file_resource, &executable_resource, &network_resource] {
+                if left.kind() != right.kind() {
+                    assert!(!left.contains(right));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn host_paths_keep_a_recursive_prefix() {
+        let roots = sample_roots("/checkouts/one");
+        let hosted =
+            FileResource::from_host_path(&roots, "/checkouts/one/src/domain/**").expect("hosted");
+        assert_eq!(hosted, file(FilesystemAnchor::Repo, "src/domain/**"));
+        assert_eq!(hosted.host_path(&roots), "/checkouts/one/src/domain");
+        let reloaded =
+            FileResource::from_host_path(&roots, hosted.host_path(&roots)).expect("reloaded");
+        assert_eq!(reloaded, file(FilesystemAnchor::Repo, "src/domain"));
+        assert!(!reloaded.is_recursive());
+        assert_eq!(
+            FileResource::from_host_path(&roots, "/checkouts/one/src/**/lib.rs"),
+            Err(ResourceError::MisplacedRecursiveMarker)
+        );
+    }
+
+    #[test]
+    fn containment_is_reflexive_antisymmetric_and_transitive() {
+        use proptest::prelude::*;
+        use proptest::test_runner::{TestRng, TestRunner};
+
+        let config = ProptestConfig {
+            cases: 64,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        };
+        let algorithm = config.rng_algorithm;
+        let mut runner = TestRunner::new_with_rng(config, TestRng::deterministic_rng(algorithm));
+        let anchor = prop_oneof![
+            Just(FilesystemAnchor::Repo),
+            Just(FilesystemAnchor::Home),
+            Just(FilesystemAnchor::Temp),
+            Just(FilesystemAnchor::Absolute),
+        ];
+        let parts = proptest::collection::vec(
+            prop_oneof![
+                Just("src"),
+                Just("domain"),
+                Just("lib.rs"),
+                Just("a"),
+                Just("b")
+            ],
+            0..=4,
+        );
+        let pattern = (anchor, parts.clone(), any::<bool>());
+        runner
+            .run(
+                &(pattern.clone(), pattern.clone(), pattern),
+                |(
+                    (anchor_a, parts_a, recursive_a),
+                    (anchor_b, parts_b, recursive_b),
+                    (anchor_c, parts_c, recursive_c),
+                )| {
+                    let parent = generated_file(anchor_a, &parts_a, recursive_a);
+                    let child = generated_file(anchor_b, &parts_b, recursive_b);
+                    let grandchild = generated_file(anchor_c, &parts_c, recursive_c);
+                    prop_assert!(parent.contains(&parent));
+                    let rebuilt =
+                        FileResource::new(parent.anchor(), parent.file_path()).expect("rebuilt");
+                    prop_assert_eq!(&parent, &rebuilt);
+                    if parent.anchor() != child.anchor() {
+                        prop_assert!(!parent.contains(&child));
+                        prop_assert!(!child.contains(&parent));
+                        return Ok(());
+                    }
+                    prop_assert_eq!(
+                        parent.contains(&child) && child.contains(&parent),
+                        parent == child
+                    );
+                    if parent.contains(&child) && parent != child {
+                        prop_assert!(!child.contains(&parent));
+                    }
+                    if parent.contains(&child) && child.contains(&grandchild) {
+                        prop_assert!(parent.contains(&grandchild));
+                    }
+                    let expected = if recursive_a && anchor_a == anchor_b {
+                        parts_b.starts_with(&parts_a[..])
+                    } else {
+                        anchor_a == anchor_b && !recursive_b && parts_a == parts_b
+                    };
+                    prop_assert_eq!(parent.contains(&child), expected);
+                    Ok(())
+                },
+            )
+            .expect("containment");
+    }
+
+    fn generated_file(anchor: FilesystemAnchor, parts: &[&str], recursive: bool) -> FileResource {
+        let supplied = if parts.is_empty() {
+            match (anchor, recursive) {
+                (FilesystemAnchor::Absolute, true) => "/**".to_owned(),
+                (FilesystemAnchor::Absolute, false) => "/".to_owned(),
+                (_, true) => "**".to_owned(),
+                (_, false) => ".".to_owned(),
+            }
+        } else {
+            let joined = parts.join("/");
+            let base = if anchor == FilesystemAnchor::Absolute {
+                format!("/{joined}")
+            } else {
+                joined
+            };
+            if recursive {
+                format!("{base}/**")
+            } else {
+                base
+            }
+        };
+        FileResource::new(anchor, supplied).expect("generated file")
     }
 }
