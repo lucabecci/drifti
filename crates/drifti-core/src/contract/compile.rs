@@ -126,7 +126,7 @@ enum CompileFailure {
 /// Empty lists add no rules. An authoring resource that is not the action's
 /// resource family fails the whole compilation.
 #[must_use = "compilation errors must be handled"]
-pub fn compile_contract(
+pub(in crate::contract) fn compile_contract(
     document: &ContractDocument,
 ) -> Result<CompiledPolicy, ContractCompileError> {
     if document.version() != ContractVersion::V1 {
