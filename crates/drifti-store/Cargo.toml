@@ -1,0 +1,17 @@
+[package]
+name = "drifti-store"
+version = "0.1.0"
+description = "SQLite execution store for Drifti"
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# SQLite stays in this crate. drifti-core must not depend on this package.
+[dependencies]
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+
+[lints]
+workspace = true
