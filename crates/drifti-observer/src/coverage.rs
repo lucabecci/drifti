@@ -4,9 +4,10 @@
 //! What an observer can see, and the coverage it declares for one execution.
 //!
 //! These types are not policy decisions. `COMPLETE` is stored only when the
-//! caller declares it and does not also mark a domain unsupported. Absence
-//! of events is not represented here; callers must not treat that absence as
-//! `UNSUPPORTED` or as `COMPLETE`.
+//! caller declares it and does not also mark a domain unsupported.
+//! [`ExecutionCoverage::no_events_seen`] records that no events were emitted.
+//! That absence is `INCOMPLETE`: it is not `UNSUPPORTED` and it is not
+//! `COMPLETE`.
 
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -47,6 +48,20 @@ impl ObservationCoverage {
     #[must_use]
     pub const fn is_complete(self) -> bool {
         matches!(self, Self::Complete)
+    }
+
+    /// Combines two declarations. Order does not hide [`Self::Unsupported`].
+    ///
+    /// The result is [`Self::Complete`] only when both inputs are `COMPLETE`.
+    /// [`Self::Unsupported`] survives a fold with `COMPLETE` or `INCOMPLETE`.
+    /// Otherwise [`Self::Incomplete`] survives a fold with `COMPLETE`.
+    #[must_use]
+    pub const fn degrade(self, next: Self) -> Self {
+        match (self, next) {
+            (Self::Unsupported, _) | (_, Self::Unsupported) => Self::Unsupported,
+            (Self::Incomplete, _) | (_, Self::Incomplete) => Self::Incomplete,
+            (Self::Complete, Self::Complete) => Self::Complete,
+        }
     }
 }
 
@@ -110,6 +125,23 @@ impl ObserverCapabilities {
     }
 }
 
+/// How one capability domain was observed inside an execution.
+///
+/// [`DomainObservation::NotObserved`] means no event established the domain.
+/// [`DomainObservation::Unsupported`] means the backend declared that it
+/// cannot observe that domain, or declared the whole execution unsupported.
+/// Those answers stay distinct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DomainObservation {
+    /// The execution was declared `COMPLETE`, this domain was advertised, and it
+    /// was not marked unsupported.
+    Covered,
+    /// An advertised domain was not seen, and the backend did not mark it unsupported.
+    NotObserved,
+    /// The backend cannot observe this domain, or declared the execution unsupported.
+    Unsupported,
+}
+
 /// Coverage declared for one execution.
 ///
 /// `status` is the caller's declaration. Unsupported domains stay in their
@@ -140,6 +172,19 @@ impl ExecutionCoverage {
         })
     }
 
+    /// Coverage when an execution emitted no events.
+    ///
+    /// The status is [`ObservationCoverage::Incomplete`] and no domain is
+    /// marked unsupported. This is "not observed". It is not `UNSUPPORTED`
+    /// and it is not `COMPLETE`.
+    #[must_use]
+    pub const fn no_events_seen() -> Self {
+        Self {
+            status: ObservationCoverage::Incomplete,
+            unsupported_domains: BTreeSet::new(),
+        }
+    }
+
     /// Declared status. This is not inferred from events.
     ///
     /// A stored `COMPLETE` beside an unsupported domain is not reported as
@@ -164,6 +209,56 @@ impl ExecutionCoverage {
     #[must_use]
     pub fn is_complete(&self) -> bool {
         self.status.is_complete() && self.unsupported_domains.is_empty()
+    }
+
+    /// Classifies `domain` against what `capabilities` can observe.
+    ///
+    /// A domain the observer did not advertise is
+    /// [`DomainObservation::Unsupported`]: it is not observable. That answer is
+    /// not [`DomainObservation::Covered`] and it is not
+    /// [`DomainObservation::NotObserved`]. A domain listed in
+    /// [`Self::unsupported_domains`], or an execution declared
+    /// [`ObservationCoverage::Unsupported`], is also unsupported.
+    /// [`ObservationCoverage::Complete`] covers only an advertised domain that
+    /// was not marked unsupported. Every other advertised domain is
+    /// [`DomainObservation::NotObserved`].
+    #[must_use]
+    pub fn domain(
+        &self,
+        capabilities: &ObserverCapabilities,
+        domain: CapabilityDomain,
+    ) -> DomainObservation {
+        if !capabilities.observes(domain) {
+            return DomainObservation::Unsupported;
+        }
+        match (self.unsupported_domains.contains(&domain), self.status()) {
+            (true, _) | (false, ObservationCoverage::Unsupported) => DomainObservation::Unsupported,
+            (false, ObservationCoverage::Complete) => DomainObservation::Covered,
+            (false, ObservationCoverage::Incomplete) => DomainObservation::NotObserved,
+        }
+    }
+
+    /// Degrades [`Self::status`] with `next` and keeps the unsupported-domain set.
+    ///
+    /// The result is complete only when the degraded status is `COMPLETE` and
+    /// `unsupported_domains` is empty. [`Self::declared`] still rejects
+    /// `COMPLETE` paired with an unsupported domain; that rejection keeps this
+    /// coverage instead of upgrading it, and does not invent `COMPLETE`.
+    #[must_use]
+    pub fn degrade_status(self, next: ObservationCoverage) -> Self {
+        let ExecutionCoverage {
+            status: current,
+            unsupported_domains,
+        } = self;
+        let status = current.degrade(next);
+        let declared = Self::declared(status, unsupported_domains.iter().copied());
+        match declared {
+            Ok(coverage) => coverage,
+            Err(CoverageError::CompleteWhileUnsupported) => Self {
+                status: current,
+                unsupported_domains,
+            },
+        }
     }
 }
 
