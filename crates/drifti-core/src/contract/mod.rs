@@ -10,12 +10,16 @@
 //! rejects every other version. It does not sort resources, resolve patterns
 //! into typed resources, or build a policy. [`compile_contract`] does that
 //! resolution and returns a typed policy value without accepting authority.
+//! [`serialize_contract`] writes the same document as stable YAML. It sorts
+//! resource lines for output and does not accept the document as authority.
 
 mod compile;
 mod parse;
+mod serialize;
 
 pub use compile::{compile_contract, ContractCompileError};
 pub use parse::{parse_contract, ContractParseError, SourceLocation};
+pub use serialize::serialize_contract;
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
