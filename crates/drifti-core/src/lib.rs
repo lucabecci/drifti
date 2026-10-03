@@ -17,10 +17,13 @@
 //! engine does not infer coverage.
 //! [`contract`] is the version-1 contract document. Its version is mandatory.
 //! [`contract::parse_contract`] reads one document and rejects every other
-//! version. [`contract::compile_contract`] resolves authoring resources into
-//! typed resources and policy rules. [`contract::serialize_contract`] writes
-//! the document as stable YAML. Neither accepts the document as authority,
-//! and neither renders a terminal.
+//! version. [`contract::serialize_contract`] writes the document as stable
+//! YAML and does not accept it. A generated document is a
+//! [`contract::ContractProposal`] until [`contract::ContractProposal::accept`]
+//! or [`contract::ContractWriteRequest::accept_written`]. An already accepted
+//! document enters through [`contract::AcceptedContract::loaded`]. Only an
+//! [`contract::AcceptedContract`] compiles into policy rules. None of these
+//! paths renders a terminal.
 //! [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]

@@ -8,16 +8,23 @@
 //! Each action has `allow` and `deny` lists of authoring resources. Version 1
 //! is mandatory. [`parse_contract`] reads one document into this model and
 //! rejects every other version. It does not sort resources, resolve patterns
-//! into typed resources, or build a policy. [`compile_contract`] does that
-//! resolution and returns a typed policy value without accepting authority.
+//! into typed resources, or build a policy. Compilation of an
+//! [`AcceptedContract`] resolves authoring resources into a typed policy.
+//! Compiling a document does not by itself accept it, and a proposal has no
+//! compile path.
 //! [`serialize_contract`] writes the same document as stable YAML. It sorts
 //! resource lines for output and does not accept the document as authority.
+//! [`ContractProposal`] stays a proposal until [`ContractProposal::accept`] or
+//! [`ContractWriteRequest::accept_written`]. [`AcceptedContract::loaded`] is
+//! how an already accepted document enters the crate.
 
+mod acceptance;
 mod compile;
 mod parse;
 mod serialize;
 
-pub use compile::{compile_contract, ContractCompileError};
+pub use acceptance::{AcceptedContract, ContractProposal, ContractWriteRequest};
+pub use compile::ContractCompileError;
 pub use parse::{parse_contract, ContractParseError, SourceLocation};
 pub use serialize::serialize_contract;
 
