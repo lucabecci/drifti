@@ -5,7 +5,10 @@
 
 use std::fs;
 use std::num::NonZeroUsize;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use drifti_observer::{
     CapabilityDomain, CommandSpec, CoverageError, EventError, EventSink, EvidenceMeta,
@@ -26,21 +29,30 @@ impl Observer for MockObserver {
         ObserverCapabilities::new([CapabilityDomain::Filesystem])
     }
 
-    fn run(&self, command: CommandSpec, sink: EventSink) -> Result<ExecutionResult, ObserverError> {
+    fn run(
+        &self,
+        command: CommandSpec,
+        sink: EventSink,
+    ) -> (EventSink, Result<ExecutionResult, ObserverError>) {
         let _ = command.program();
         for event in &self.events {
-            sink.emit(event.clone())?;
+            if let Err(error) = sink.emit(event.clone()) {
+                return (sink, Err(error.into()));
+            }
         }
         let execution_id = self
             .events
             .first()
             .map(ObservedEvent::execution_id)
             .unwrap_or_else(|| ExecutionId::from_raw(1));
-        Ok(ExecutionResult::new(
-            execution_id,
-            self.coverage.clone(),
-            Some(0),
-        ))
+        (
+            sink,
+            Ok(ExecutionResult::new(
+                execution_id,
+                self.coverage.clone(),
+                Some(0),
+            )),
+        )
     }
 }
 
@@ -65,7 +77,8 @@ fn mock_observer_emits_then_returns_explicit_coverage() {
     assert_eq!(command.args(), [SECRET_ARG]);
 
     let (sink, cursor) = EventSink::bounded(NonZeroUsize::new(4).expect("capacity"));
-    let result = observer.run(command, sink).expect("run");
+    let (_sink, result) = observer.run(command, sink);
+    let result = result.expect("run");
 
     assert_eq!(result.execution_id(), ExecutionId::from_raw(7));
     assert_eq!(result.exit_code(), Some(0));
@@ -105,7 +118,8 @@ fn exit_code_zero_does_not_declare_complete_coverage() {
     };
     let command = CommandSpec::try_new("demo", [], None).expect("command");
     let (sink, _cursor) = EventSink::bounded(NonZeroUsize::new(1).expect("capacity"));
-    let result = observer.run(command, sink).expect("run");
+    let (_sink, result) = observer.run(command, sink);
+    let result = result.expect("run");
     assert_eq!(result.exit_code(), Some(0));
     assert_eq!(result.coverage().status(), ObservationCoverage::Incomplete);
     assert!(!result.coverage().is_complete());
@@ -130,6 +144,70 @@ fn closed_sink_returns_the_event() {
     let error = sink.emit(event.clone()).expect_err("closed");
     assert_eq!(error.event(), &event);
     assert_eq!(error.into_event(), event);
+}
+
+#[test]
+fn dropped_cursor_keeps_the_accepted_event() {
+    let accepted = sample_event(1, 1);
+    let (sink, cursor) = EventSink::bounded(NonZeroUsize::new(1).expect("capacity"));
+    sink.emit(accepted.clone()).expect("accepted");
+    drop(cursor);
+
+    assert_eq!(sink.take_unconsumed(), vec![accepted]);
+
+    let rejected = sample_event(2, 2);
+    let error = sink.emit(rejected.clone()).expect_err("closed");
+    assert_eq!(error.into_event(), rejected);
+    assert!(sink.take_unconsumed().is_empty());
+}
+
+#[test]
+fn run_returns_an_accepted_event_without_cloning_the_sink() {
+    let first = sample_event(1, 1);
+    let second = sample_event(2, 2);
+    let phase = Arc::new(AtomicU8::new(0));
+    let observer = BlockingObserver {
+        first: first.clone(),
+        second: second.clone(),
+        phase: Arc::clone(&phase),
+    };
+    let command = CommandSpec::try_new("demo", [], None).expect("command");
+    let (sink, cursor) = EventSink::bounded(NonZeroUsize::new(1).expect("capacity"));
+    let handle = thread::spawn(move || observer.run(command, sink));
+
+    wait_phase(&phase, |value| value >= 1);
+    drop(cursor);
+
+    let (returned, result) = handle.join().expect("observer thread");
+    let error = result.expect_err("sink failure must not be Ok");
+    let ObserverError::Sink(sink_error) = error else {
+        panic!("expected ObserverError::Sink, got {error}");
+    };
+    assert_eq!(sink_error.into_event(), second);
+    assert_eq!(returned.take_unconsumed(), vec![first]);
+    assert!(returned.take_unconsumed().is_empty());
+}
+
+#[test]
+fn deserialize_rejects_complete_with_an_unsupported_domain() {
+    let rejected = serde_json::from_str::<ExecutionCoverage>(
+        r#"{"status":"COMPLETE","unsupported_domains":["network"]}"#,
+    )
+    .expect_err("COMPLETE plus an unsupported domain");
+    assert!(!rejected.to_string().is_empty());
+
+    let coverage: ExecutionCoverage =
+        serde_json::from_str(r#"{"status":"COMPLETE","unsupported_domains":[]}"#)
+            .expect("explicit complete");
+    assert!(coverage.is_complete());
+    assert_eq!(coverage.status(), ObservationCoverage::Complete);
+
+    let partial: ExecutionCoverage =
+        serde_json::from_str(r#"{"status":"INCOMPLETE","unsupported_domains":["network"]}"#)
+            .expect("partial declaration");
+    assert!(!partial.is_complete());
+    assert_eq!(partial.status(), ObservationCoverage::Incomplete);
+    assert_ne!(partial.status(), ObservationCoverage::Complete);
 }
 
 #[test]
@@ -196,6 +274,58 @@ fn crate_boundary_has_no_platform_or_core_dependency() {
         ] {
             assert!(!source.contains(forbidden), "{name} contains {forbidden}");
         }
+    }
+}
+
+struct BlockingObserver {
+    first: ObservedEvent,
+    second: ObservedEvent,
+    phase: Arc<AtomicU8>,
+}
+
+impl Observer for BlockingObserver {
+    fn capabilities(&self) -> ObserverCapabilities {
+        ObserverCapabilities::new([CapabilityDomain::Filesystem])
+    }
+
+    fn run(
+        &self,
+        command: CommandSpec,
+        sink: EventSink,
+    ) -> (EventSink, Result<ExecutionResult, ObserverError>) {
+        let _ = command.program();
+        if let Err(error) = sink.emit(self.first.clone()) {
+            return (sink, Err(error.into()));
+        }
+        self.phase.store(1, Ordering::Release);
+        if let Err(error) = sink.emit(self.second.clone()) {
+            return (sink, Err(error.into()));
+        }
+        let coverage =
+            ExecutionCoverage::declared(ObservationCoverage::Incomplete, []).expect("coverage");
+        (
+            sink,
+            Ok(ExecutionResult::new(
+                self.first.execution_id(),
+                coverage,
+                Some(0),
+            )),
+        )
+    }
+}
+
+fn wait_phase(phase: &AtomicU8, is_ready: impl Fn(u8) -> bool) {
+    let started = Instant::now();
+    loop {
+        let current = phase.load(Ordering::Acquire);
+        if is_ready(current) {
+            return;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "phase stayed at {current}"
+        );
+        thread::sleep(Duration::from_millis(5));
     }
 }
 

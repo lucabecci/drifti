@@ -10,8 +10,10 @@
 //!
 //! `sequence` is the ordering authority inside one execution. A monotonic
 //! timestamp is informational. [`EventSink::emit`] waits while the bounded
-//! buffer is full and returns the event if the consumer is gone. There is
-//! no API that discards an event and reports success.
+//! buffer is full and returns the event if the consumer is gone. An event
+//! that was already accepted stays available after the cursor drops, and
+//! [`Observer::run`] returns the sink so that event is still in the caller's
+//! hands. There is no API that discards an event and reports success.
 //!
 //! Observation coverage (`COMPLETE`, `INCOMPLETE`, `UNSUPPORTED`) is local
 //! to this crate. It is not the policy coverage type in `drifti-core`.
