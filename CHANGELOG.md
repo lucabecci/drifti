@@ -10,6 +10,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
+- Policy decisions, allow and deny rules, and evaluation results in `drifti-core`.
 - Capability identity limited to action plus normalized resource, with a lossless serde round trip, in `drifti-core`.
 - Deterministic resource containment in `drifti-core`, including exact matches and recursive filesystem prefixes.
 - Canonical executable identity and CIDR network addresses in `drifti-core`.
