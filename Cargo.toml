@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/drifti-core"]
+members = ["crates/drifti-core", "crates/drifti-observer"]
 
 [workspace.package]
 edition = "2021"
