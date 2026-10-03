@@ -11,6 +11,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 ### Added
 
 - Exact and recursive-prefix policy rule matching in `drifti-core`.
+- SPEC-001 property suite for normalization, equality, containment, serialization, and cross-resource rejection in `drifti-core`.
 - Policy decisions, allow and deny rules, and evaluation results in `drifti-core`.
 - Capability identity limited to action plus normalized resource, with a lossless serde round trip, in `drifti-core`.
 - Deterministic resource containment in `drifti-core`, including exact matches and recursive filesystem prefixes.
