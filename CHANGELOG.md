@@ -11,6 +11,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 ### Added
 
 - Actionable contract validation errors that name the field path, a bounded value, and the expected form, including a dedicated unsupported-version failure, in `drifti-core`.
+- Deterministic serialization of a version-1 contract into stable `drifti.yaml` text in `drifti-core`.
 - Compilation of a parsed version-1 contract into typed filesystem, executable, and network policy rules in `drifti-core`.
 - YAML parsing of a version-1 contract document, with an explicit failure for any other version, in `drifti-core`.
 - Version-1 contract document model for filesystem, process, and network allow and deny rules in `drifti-core`.
