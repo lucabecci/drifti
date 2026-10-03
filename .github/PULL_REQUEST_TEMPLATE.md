@@ -2,6 +2,13 @@
 
 <!-- What does this change, and why? -->
 
+## Jira
+
+<!-- Implementation pull requests: KAN-NN.
+Branch: `<type>/KAN-NN-<short-title>`.
+One task, one branch, one pull request. Omit this section only when no Jira task applies.
+-->
+
 ## Spec
 
 <!-- Implementation PRs only. Omit this section for docs-only changes.
