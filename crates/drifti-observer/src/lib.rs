@@ -17,6 +17,8 @@
 //!
 //! Observation coverage (`COMPLETE`, `INCOMPLETE`, `UNSUPPORTED`) is local
 //! to this crate. It is not the policy coverage type in `drifti-core`.
+//! [`mock::MockObserver`] replays a script on any host. It does not depend
+//! on `drifti-core` and it does not launch a process.
 
 #![forbid(unsafe_code)]
 
@@ -24,6 +26,7 @@ mod text;
 
 pub mod coverage;
 pub mod event;
+pub mod mock;
 pub mod observer;
 pub mod sink;
 
@@ -34,5 +37,6 @@ pub use event::{
     EventError, EvidenceMeta, ExecutionId, FailureReason, MonotonicTimestamp, ObservedEvent,
     ObservedResource, Operation, Outcome, ParentIdentity, ProcessIdentity,
 };
+pub use mock::{MockError, MockObserver, ObservationScript};
 pub use observer::{CommandSpec, ExecutionResult, Observer, ObserverError};
 pub use sink::{CursorError, EventCursor, EventSink, SinkError};
