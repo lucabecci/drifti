@@ -1,6 +1,6 @@
 ---
 name: validate-spec
-description: Validates a Drifti implementation against its current SPEC before changing code. Use when the user asks to review a SPEC implementation, check acceptance criteria, or validate scope against SPEC-00N.
+description: Validates a Drifti implementation against its current SPEC before changing code. Use when a Jira task is in En revisión with phase-validation, or when the user asks to review a SPEC implementation, check acceptance criteria, or validate scope against SPEC-00N.
 ---
 
 # Validate a SPEC
@@ -34,6 +34,13 @@ Return:
 - Deterministic or security issues.
 
 Then apply [security-review](../security-review/SKILL.md).
+
+## Jira
+
+The issue should be **En revisión** with label `phase-validation`. Add this report as a Jira comment.
+
+- On `FAIL`, move the issue back to **En progreso** and leave the findings for the implementer.
+- On `PASS`, replace `phase-validation` with `phase-security-review` before the security review starts.
 
 ## Boundaries
 
