@@ -10,6 +10,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
+- Canonical executable identity and CIDR network addresses in `drifti-core`.
 - Filesystem anchors and lexical path normalization in `drifti-core`.
 - Typed MVP capability actions and resources in `drifti-core`.
 - `drifti-core` crate skeleton, serde boundary, and architecture test harness.
