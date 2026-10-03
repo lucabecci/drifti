@@ -9,7 +9,7 @@ Prefer strongly typed domain models, explicit errors, bounded buffers, determini
 
 Avoid stringly-typed domain logic.
 
-Do not initialize the Rust workspace unless the current task explicitly asks.
+`drifti-core` is initialized. Do not add other crates unless the current task explicitly asks.
 
 ## Boundaries
 

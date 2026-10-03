@@ -10,6 +10,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
+- `drifti-core` crate skeleton, serde boundary, and architecture test harness.
 - Development Playbook for SPEC-driven agent work, with project skills for implementation, Rust conventions, spec validation, and security review.
 
 ### Changed

@@ -7,7 +7,7 @@ description: Implements one Drifti SPEC end to end without changing unrelated ar
 
 Primary rule: Drifti is developed from explicit contracts. Implement the requested SPEC. Do not invent product behavior or silently change architecture.
 
-The Rust workspace is not initialized. Do not add `Cargo.toml`, crate directories, or `drifti` commands unless the current task explicitly asks to initialize the crate or implement that SPEC in code.
+`drifti-core` is initialized. Do not add other crate directories or `drifti` commands unless the current task explicitly asks to initialize that crate or implement that behavior.
 
 ## Workflow
 

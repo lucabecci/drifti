@@ -6,7 +6,7 @@
 
 This file is the in-repository copy of the [Development Playbook — Agents, Skills & Workflow](https://lucabecci.atlassian.net/wiki/spaces/~5e5ee73f27b3910afc2fba2c/pages/163989/Development+Playbook+Agents+Skills+Workflow). The enforced agent instructions live in [AGENTS.md](../AGENTS.md). Project skills live in [`.agents/skills/`](../.agents/skills/).
 
-The Rust workspace is not initialized. Do not add `Cargo.toml`, crate directories, or nested crate `AGENTS.md` files unless the current task explicitly asks to initialize them. Product documents other than this playbook still live in Confluence.
+`drifti-core` is initialized. Do not add other crate directories, `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`, or nested `AGENTS.md` files unless the current task explicitly asks. Product documents other than this playbook still live in Confluence.
 
 ## Source of truth
 
@@ -58,13 +58,13 @@ drifti/
     └── drifti-cli/
 ```
 
-`Cargo.toml` and `crates/` are the target workspace. They are absent until a task explicitly initializes the crate.
+`Cargo.toml` and `crates/drifti-core` exist. The other crates are absent until a task explicitly initializes them.
 
 ## AGENTS.md strategy
 
 Use a small root `AGENTS.md` for project-wide invariants and add nested `AGENTS.md` files only where a crate has genuinely different rules.
 
-The root [AGENTS.md](../AGENTS.md) is the enforced copy. It keeps this playbook's product guidance and the repository rules this playbook does not replace: Conventional Commits, the license header, and the uninitialized Rust toolchain.
+The root [AGENTS.md](../AGENTS.md) is the enforced copy. It keeps this playbook's product guidance and the repository rules this playbook does not replace: Conventional Commits, the license header, and the rule that further crates and toolchain files are added only when a task asks.
 
 ### Root AGENTS.md responsibilities
 
@@ -463,7 +463,7 @@ Each implementation PR should identify:
 - [ ] `validate-spec` review is clean or deviations are documented.
 - [ ] `security-review` findings are resolved or explicitly accepted.
 
-`cargo fmt` and `cargo clippy` apply once a Rust workspace exists. Until then, do not initialize the toolchain to satisfy this checklist.
+`cargo fmt` and `cargo clippy` apply to the existing workspace. Do not add other crates or a toolchain file only to satisfy this checklist.
 
 ## Operating principle
 
@@ -612,7 +612,7 @@ Jira DONE
 18. After merge or explicit accepted completion, move the issue to **Completado**.
 19. Inspect Jira dependencies. For each directly blocked successor whose blockers are now complete, remove `blocked` and add `ready`.
 
-`cargo fmt` and `cargo clippy` apply once a Rust workspace exists. Do not initialize the toolchain to satisfy this lifecycle.
+`cargo fmt` and `cargo clippy` apply to the existing workspace. Do not add other crates or a toolchain file only to satisfy this lifecycle.
 
 ### Visibility requirement
 

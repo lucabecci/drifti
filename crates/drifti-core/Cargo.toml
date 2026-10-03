@@ -1,0 +1,21 @@
+[package]
+name = "drifti-core"
+version = "0.1.0"
+description = "Portable capability domain model for Drifti"
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# Domain dependencies only. Linux, SQLite, and CLI crates do not belong here.
+[dependencies]
+serde = { version = "1.0.217", features = ["derive"] }
+
+[dev-dependencies]
+proptest = { version = "=1.6.0", default-features = false, features = ["std", "bit-set"] }
+serde_json = "1.0.138"
+
+[lints]
+workspace = true

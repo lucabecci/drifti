@@ -12,7 +12,7 @@ Once the repository is on GitHub, you can also use private vulnerability reporti
 
 ## Supported versions
 
-No version is supported yet. There is no crate and no release.
+No version is supported yet. `drifti-core` exists, and there is no release.
 
 ## Observation data
 
