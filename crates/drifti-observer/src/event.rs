@@ -222,8 +222,9 @@ impl FailureReason {
 
 /// Whether the operation succeeded.
 ///
-/// [`Outcome::Success`] is an exercised operation.
-/// [`Outcome::Failure`] is an attempted operation that was not exercised.
+/// RFC-001: an attempted capability is an operation the process attempted, and
+/// an exercised capability is an operation that succeeded. [`Self::Success`]
+/// is attempted and exercised. [`Self::Failure`] is attempted and not exercised.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Outcome {
@@ -239,7 +240,7 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// Exercised operation.
+    /// Attempted operation that succeeded.
     #[must_use]
     pub const fn success() -> Self {
         Self::Success
@@ -392,14 +393,14 @@ impl ObservedEvent {
         }
     }
 
-    /// Whether the operation failed.
+    /// Whether the process attempted the operation.
     ///
-    /// True only for [`Outcome::Failure`]. Success is exercised, not attempted.
+    /// True for both [`Outcome::Success`] and [`Outcome::Failure`]. Success is
+    /// an attempt that was exercised. Failure is an attempt that was not.
     #[must_use]
     pub const fn was_attempted(&self) -> bool {
         match self.outcome() {
-            Outcome::Success => false,
-            Outcome::Failure { .. } => true,
+            Outcome::Success | Outcome::Failure { .. } => true,
         }
     }
 }

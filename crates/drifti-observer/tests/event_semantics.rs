@@ -70,11 +70,11 @@ fn sorting_with_sequence_cmp_is_not_a_timestamp_sort() {
 }
 
 #[test]
-fn success_is_exercised_and_failure_is_only_attempted() {
+fn success_is_attempted_and_exercised_and_failure_is_only_attempted() {
     let reason = FailureReason::new("eacces").expect("reason");
     let exercised = event_with_outcome(Outcome::success());
+    assert!(exercised.was_attempted());
     assert!(exercised.was_exercised());
-    assert!(!exercised.was_attempted());
 
     let attempted = event_with_outcome(Outcome::failure(Some(13), Some(reason)));
     assert!(attempted.was_attempted());
