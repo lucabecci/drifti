@@ -6,9 +6,9 @@
 //! This crate owns capability identity, policy, learning, and drift.
 //! It does not observe processes, persist traces, or render a terminal.
 //!
-//! The public modules are the layout for that model. Concrete capability
-//! types are added by later tasks. [`foundation`] is the serde boundary
-//! those types use.
+//! [`capability`] and [`resource`] are the MVP action and resource model.
+//! Normalization, containment, and the capability serialization contract are
+//! later tasks. [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]
 
