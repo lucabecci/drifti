@@ -23,7 +23,7 @@ This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). Report unac
 
 Assistance from coding agents is welcome. You remain the author of the change: understand it, test it when there is something to test, and describe it accurately. Do not submit generated changes you cannot explain.
 
-Agents follow the [Development Playbook](docs/development-playbook.md). Implementation work is SPEC-driven: implement the requested SPEC, validate its acceptance criteria, and review the security assumptions before opening a pull request. Do not invent product behavior or change an architectural decision inside a code change.
+Agents follow the [Development Playbook](docs/development-playbook.md). Normal implementation work starts from a Jira task labeled `ready` in project `KAN`, then implements that task's SPEC, validates its acceptance criteria, and reviews the security assumptions before opening a pull request. Do not invent product behavior or change an architectural decision inside a code change.
 
 ## Conventional Commits
 

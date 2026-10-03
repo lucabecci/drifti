@@ -8,7 +8,7 @@ Drifti is a local-first Rust developer tool. It sits between observation and enf
 
 - [README](README.md): Product statement, status, and dual license
 - [AGENTS.md](AGENTS.md): Instructions for coding agents working in this repository
-- [Development Playbook](docs/development-playbook.md): SPEC-driven workflow, agent skills, and context-loading order
+- [Development Playbook](docs/development-playbook.md): SPEC-driven workflow, mandatory Jira task lifecycle, and agent skills
 - [CONTRIBUTING.md](CONTRIBUTING.md): Conventional Commits, contribution license, and local git hooks
 - [SECURITY.md](SECURITY.md): How to report a vulnerability in private
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): Contributor Covenant 2.1
