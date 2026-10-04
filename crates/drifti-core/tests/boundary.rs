@@ -907,7 +907,7 @@ fn dependencies_stay_inside_the_domain_boundary() {
 }
 
 #[test]
-fn workspace_contains_core_observer_and_linux_backend() {
+fn workspace_contains_initialized_crates() {
     let manifest = fs::read_to_string(workspace_manifest()).expect("read workspace manifest");
     let members = workspace_members(&manifest);
     assert_eq!(
@@ -916,9 +916,10 @@ fn workspace_contains_core_observer_and_linux_backend() {
             "crates/drifti-core",
             "crates/drifti-observer",
             "crates/drifti-observer-linux",
+            "crates/drifti-store",
         ]
     );
-    for member in ["drifti-store", "drifti-cli"] {
+    for member in ["drifti-cli"] {
         assert!(
             !manifest.contains(member),
             "workspace manifest names {member} before that crate is initialized"
