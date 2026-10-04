@@ -249,7 +249,8 @@ impl TraceVisitor for Phases {
 
 fn gap_tid(gap: ObservationGap) -> u32 {
     match gap {
-        ObservationGap::SyscallPhaseMismatch { tid, .. }
+        ObservationGap::UnsupportedIoUring { tid, .. }
+        | ObservationGap::SyscallPhaseMismatch { tid, .. }
         | ObservationGap::UnaffiliatedTracee { tid }
         | ObservationGap::SeccompStop { tid }
         | ObservationGap::ProcStatusUnreadable { tid }
