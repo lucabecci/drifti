@@ -24,6 +24,8 @@
 mod abi;
 mod cleanup;
 mod error;
+#[cfg(target_os = "linux")]
+mod filesystem;
 mod lifecycle;
 mod lineage;
 mod memory;
@@ -57,6 +59,8 @@ pub use wait_status::{decode_wait_status, DecodedWait};
 
 #[cfg(target_os = "linux")]
 pub use backend::LinuxObserver;
+#[cfg(target_os = "linux")]
+pub use filesystem::{FilesystemDecodeError, FilesystemDecoder, FilesystemFact};
 #[cfg(target_os = "linux")]
 pub use memory::read_remote_memory;
 #[cfg(target_os = "linux")]
