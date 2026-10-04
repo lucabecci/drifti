@@ -915,15 +915,14 @@ fn workspace_contains_initialized_crates() {
         [
             "crates/drifti-core",
             "crates/drifti-observer",
+            "crates/drifti-observer-linux",
             "crates/drifti-store",
         ]
     );
-    for member in ["drifti-observer-linux", "drifti-cli"] {
-        assert!(
-            !manifest.contains(member),
-            "workspace manifest names {member} before that crate is initialized"
-        );
-    }
+    assert!(
+        !manifest.contains("drifti-cli"),
+        "workspace manifest names drifti-cli before that crate is initialized"
+    );
 }
 
 #[test]

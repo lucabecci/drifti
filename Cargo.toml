@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/drifti-core",
     "crates/drifti-observer",
+    "crates/drifti-observer-linux",
     "crates/drifti-store",
 ]
 

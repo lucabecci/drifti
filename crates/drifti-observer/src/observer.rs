@@ -171,6 +171,27 @@ pub enum ObserverError {
     EmbeddedNul,
     /// The sink rejected an event. The event is inside `SinkError`.
     Sink(SinkError),
+    /// The backend could not finish observation.
+    ///
+    /// This is not `COMPLETE` coverage, not `DENIED`, and not a policy decision.
+    /// Platform details stay in the backend; this variant only names the class.
+    ObservationFailed {
+        /// Why an execution result is not available.
+        reason: ObservationFailureReason,
+    },
+}
+
+/// Why [`ObserverError::ObservationFailed`] was returned.
+///
+/// These reasons are platform-neutral. A launch failure means no tracee
+/// lifecycle was established. An interrupted trace means observation stopped
+/// before that lifecycle finished.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservationFailureReason {
+    /// The tracee could not be launched.
+    Launch,
+    /// Tracing stopped before the launched lifecycle finished.
+    TraceInterrupted,
 }
 
 impl Display for ObserverError {
@@ -190,6 +211,12 @@ impl Display for ObserverError {
             }
             Self::EmbeddedNul => formatter.write_str("command text contains a NUL byte"),
             Self::Sink(error) => write!(formatter, "{error}"),
+            Self::ObservationFailed {
+                reason: ObservationFailureReason::Launch,
+            } => formatter.write_str("observation failed during tracee launch"),
+            Self::ObservationFailed {
+                reason: ObservationFailureReason::TraceInterrupted,
+            } => formatter.write_str("observation failed before the tracee lifecycle finished"),
         }
     }
 }
@@ -233,4 +260,21 @@ fn map_arg(arg: String, index: usize) -> Result<String, ObserverError> {
         return Err(ObserverError::EmbeddedNul);
     }
     Ok(arg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ObservationFailureReason, ObserverError};
+
+    #[test]
+    fn observation_failure_is_not_a_completed_run() {
+        let error = ObserverError::ObservationFailed {
+            reason: ObservationFailureReason::Launch,
+        };
+        assert!(!matches!(error, ObserverError::Sink(_)));
+        let text = error.to_string();
+        assert!(text.contains("launch"));
+        assert!(!text.contains("COMPLETE"));
+        assert!(!text.contains("DENIED"));
+    }
 }

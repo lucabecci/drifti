@@ -38,5 +38,7 @@ pub use event::{
     ObservedResource, Operation, Outcome, ParentIdentity, ProcessIdentity,
 };
 pub use mock::{MockError, MockObserver, ObservationScript};
-pub use observer::{CommandSpec, ExecutionResult, Observer, ObserverError};
+pub use observer::{
+    CommandSpec, ExecutionResult, ObservationFailureReason, Observer, ObserverError,
+};
 pub use sink::{CursorError, EventCursor, EventSink, SinkError};

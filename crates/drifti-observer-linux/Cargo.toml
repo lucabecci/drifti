@@ -1,0 +1,32 @@
+[package]
+name = "drifti-observer-linux"
+version = "0.1.0"
+description = "Linux ptrace observer backend for Drifti"
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+drifti-observer = { path = "../drifti-observer" }
+libc = "0.2.169"
+
+# The workspace forbids unsafe code. This package does not inherit that
+# lint: ptrace and remote reads need `unsafe`, denied by default here and
+# allowed only on the modules that perform those calls. `forbid` cannot be
+# narrowed in a child module, so this package uses `deny`.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
+[[bin]]
+name = "lifecycle-tracee"
+path = "fixtures/lifecycle_tracee.rs"
+
+[[bin]]
+name = "lifecycle-tracer"
+path = "fixtures/lifecycle_tracer.rs"

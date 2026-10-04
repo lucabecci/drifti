@@ -82,6 +82,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "drifti-observer-linux"
+version = "0.1.0"
+dependencies = [
+ "drifti-observer",
+ "libc",
+]
+
+[[package]]
 name = "drifti-store"
 version = "0.1.0"
 dependencies = [
