@@ -30,3 +30,7 @@ path = "fixtures/lifecycle_tracee.rs"
 [[bin]]
 name = "lifecycle-tracer"
 path = "fixtures/lifecycle_tracer.rs"
+
+[[bin]]
+name = "network-tracee"
+path = "fixtures/network_tracee.rs"

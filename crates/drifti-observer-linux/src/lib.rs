@@ -9,8 +9,7 @@
 //! syscall entry/exit state, and sets `PTRACE_O_EXITKILL` so a tracer that
 //! dies does not leave tracees running where the kernel supports that option.
 //!
-//! Semantic events are not decoded here. Process, filesystem, and network
-//! decoding consume [`TraceStop`] values from [`TraceVisitor`] while the
+//! Semantic decoders consume [`TraceStop`] values from [`TraceVisitor`] while the
 //! tracee is stopped. [`TraceReport::bootstrap_coverage`] is `INCOMPLETE`,
 //! never `COMPLETE`. Remote reads go through [`read_remote_memory`] and are
 //! capped by [`MAX_REMOTE_READ`].
@@ -27,6 +26,7 @@ mod error;
 mod lifecycle;
 mod lineage;
 mod memory;
+mod network;
 mod options;
 mod proc_status;
 mod report;
