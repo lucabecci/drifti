@@ -23,6 +23,7 @@
 
 mod error;
 mod execution;
+mod process;
 mod schema;
 
 use std::fs;
@@ -35,6 +36,7 @@ pub use execution::{
     CapabilityDomain, CommandMetadata, CoverageStatus, ExecutionId, ExecutionRecord,
     ExecutionRepository, FinishExecution, Lifecycle,
 };
+pub use process::{ProcessLineage, ProcessRecord, ProcessRepository};
 pub use schema::{
     canonical_resource, parse_canonical_resource, sqlite_i64, CanonicalResource,
     OwnedCanonicalResource, DATABASE_FILE, MAX_IDENTITY_BYTES, PROHIBITED_COLUMN_NAMES,
