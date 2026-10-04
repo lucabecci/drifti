@@ -19,6 +19,13 @@ use crate::syscall::ObservedSyscall;
 /// to the visitor and keep it on the lineage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObservationGap {
+    /// io_uring can perform operations outside the syscall decoder's view.
+    UnsupportedIoUring {
+        /// Thread that attempted the operation.
+        tid: u32,
+        /// Entry syscall number, retained without remote arguments.
+        syscall: u64,
+    },
     /// Kernel entry/exit order disagreed with this thread's slot.
     SyscallPhaseMismatch {
         /// Thread that stopped.
@@ -103,6 +110,12 @@ pub enum ObservationGap {
 impl Display for ObservationGap {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnsupportedIoUring { tid, syscall } => {
+                write!(
+                    formatter,
+                    "unsupported io_uring syscall {syscall} on tid {tid}"
+                )
+            }
             Self::SyscallPhaseMismatch {
                 tid,
                 expected,

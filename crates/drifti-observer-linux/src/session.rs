@@ -73,6 +73,7 @@ pub struct TraceSession {
     pidfds: BTreeMap<u32, PidFd>,
     stops_delivered: u64,
     gaps_sent: usize,
+    io_uring_gap_recorded: bool,
     _lock: MutexGuard<'static, ()>,
 }
 
@@ -150,6 +151,7 @@ impl TraceSession {
             pidfds,
             stops_delivered: 0,
             gaps_sent: 0,
+            io_uring_gap_recorded: false,
             _lock,
         };
         if let Err(error) = session.syscall_resume(pid, 0) {
@@ -186,6 +188,13 @@ impl TraceSession {
             };
             self.close_dead_pidfds();
             self.deliver_undelivered_gaps(visitor)?;
+            if let Some(gap) =
+                crate::unsupported::io_uring_gap(&applied.stop, self.io_uring_gap_recorded)
+            {
+                self.lineage.push_gap(gap)?;
+                self.io_uring_gap_recorded = true;
+                self.deliver_undelivered_gaps(visitor)?;
+            }
             if !matches!(applied.stop, TraceStop::Gap(_)) {
                 self.deliver(applied.stop, visitor)?;
             }
