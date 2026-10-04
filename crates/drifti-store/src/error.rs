@@ -68,6 +68,34 @@ pub enum StoreError {
     InvalidCanonicalResource,
     /// An unsigned integer does not fit in a SQLite INTEGER.
     IntegerOutOfRange,
+    /// No execution row uses this id.
+    ExecutionNotFound {
+        /// Canonical execution id.
+        id: String,
+    },
+    /// `finish_execution` was called for an execution that is already finished.
+    ExecutionAlreadyFinished {
+        /// Canonical execution id.
+        id: String,
+    },
+    /// `COMPLETE` was paired with at least one unsupported domain.
+    ///
+    /// The store does not rewrite that pair into another coverage status.
+    CompleteWhileUnsupported,
+    /// The command program was empty, contained NUL, or exceeded 4096 bytes.
+    InvalidCommandProgram,
+    /// The argument count was above 256. Argument values are not stored.
+    ArgCountOutOfRange,
+    /// Version text was empty, contained NUL, or exceeded 128 bytes.
+    InvalidVersionText,
+    /// The text was not a canonical execution id.
+    InvalidExecutionId,
+    /// The clock could not supply a millisecond timestamp inside 48 bits.
+    ClockOutOfRange,
+    /// Every id for the current millisecond prefix was already issued.
+    ExecutionIdExhausted,
+    /// A stored execution row broke an invariant this repository can read.
+    CorruptExecution,
 }
 
 impl Display for StoreError {
@@ -117,6 +145,28 @@ impl Display for StoreError {
             Self::IntegerOutOfRange => {
                 formatter.write_str("value does not fit in a SQLite INTEGER")
             }
+            Self::ExecutionNotFound { id } => {
+                write!(formatter, "execution {id} is unknown")
+            }
+            Self::ExecutionAlreadyFinished { id } => {
+                write!(formatter, "execution {id} is already finished")
+            }
+            Self::CompleteWhileUnsupported => {
+                formatter.write_str("COMPLETE coverage cannot include an unsupported domain")
+            }
+            Self::InvalidCommandProgram => {
+                formatter.write_str("command program is empty, contains NUL, or exceeds 4096 bytes")
+            }
+            Self::ArgCountOutOfRange => formatter.write_str("argument count exceeds 256"),
+            Self::InvalidVersionText => {
+                formatter.write_str("version text is empty, contains NUL, or exceeds 128 bytes")
+            }
+            Self::InvalidExecutionId => {
+                formatter.write_str("execution id must be 32 lowercase hex characters")
+            }
+            Self::ClockOutOfRange => formatter.write_str("clock is outside the execution id range"),
+            Self::ExecutionIdExhausted => formatter.write_str("execution id space is exhausted"),
+            Self::CorruptExecution => formatter.write_str("execution row cannot be read honestly"),
         }
     }
 }
@@ -132,7 +182,17 @@ impl Error for StoreError {
             | Self::IdentityTooLong
             | Self::EmbeddedNul
             | Self::InvalidCanonicalResource
-            | Self::IntegerOutOfRange => None,
+            | Self::IntegerOutOfRange
+            | Self::ExecutionNotFound { .. }
+            | Self::ExecutionAlreadyFinished { .. }
+            | Self::CompleteWhileUnsupported
+            | Self::InvalidCommandProgram
+            | Self::ArgCountOutOfRange
+            | Self::InvalidVersionText
+            | Self::InvalidExecutionId
+            | Self::ClockOutOfRange
+            | Self::ExecutionIdExhausted
+            | Self::CorruptExecution => None,
         }
     }
 }
