@@ -12,7 +12,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use drifti_observer::{
-    CommandSpec, CursorError, EventSink, ExecutionId, ObservationCoverage, Observer,
+    CapabilityDomain, CommandSpec, CursorError, EventSink, ExecutionId, ObservationCoverage,
+    ObservedResource, Observer, Operation, Outcome,
 };
 use drifti_observer_linux::{
     LinuxObserver, ObservationGap, ObservedSyscall, SessionLimits, ThreadLineage, TraceError,
@@ -207,16 +208,86 @@ fn tracer_exit_kills_the_tracee() {
 }
 
 #[test]
-fn observer_run_emits_no_semantic_events_and_is_incomplete() {
+fn observer_run_emits_resolved_process_event_and_is_incomplete() {
     let observer = LinuxObserver::new(ExecutionId::from_raw(47));
-    assert!(observer.capabilities().domains().is_empty());
+    assert!(observer.capabilities().observes(CapabilityDomain::Process));
     let (sink, cursor) = EventSink::bounded(std::num::NonZeroUsize::new(4).unwrap());
     let (_sink, result) = observer.run(command(&["exit", "0"], None), sink);
     let result = result.expect("run");
     assert_eq!(result.exit_code(), Some(0));
     assert!(!result.coverage().is_complete());
     assert_eq!(result.coverage().status(), ObservationCoverage::Incomplete);
+    let event = cursor.try_recv().expect("root exec event");
+    assert_eq!(event.operation(), Operation::ProcessExecute);
+    assert!(matches!(event.outcome(), Outcome::Success {}));
+    assert_eq!(event.execution_id(), ExecutionId::from_raw(47));
+    assert_eq!(event.parent(), None);
+    assert!(
+        matches!(event.resource(), ObservedResource::Executable { identity } if identity == env_tracee())
+    );
     assert!(matches!(cursor.try_recv(), Err(CursorError::Empty)));
+}
+
+#[test]
+fn child_and_grandchild_exec_events_keep_parent_identity() {
+    let observer = LinuxObserver::new(ExecutionId::from_raw(48));
+    let (sink, cursor) = EventSink::bounded(std::num::NonZeroUsize::new(8).unwrap());
+    let (_sink, result) = observer.run(command(&["exec-tree"], None), sink);
+    assert_eq!(result.expect("run").exit_code(), Some(0));
+    let events: Vec<_> = (0..3)
+        .map(|_| cursor.try_recv().expect("exec event"))
+        .collect();
+    assert!(matches!(cursor.try_recv(), Err(CursorError::Empty)));
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event.sequence())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    assert!(events
+        .iter()
+        .all(|event| event.operation() == Operation::ProcessExecute
+            && matches!(event.outcome(), Outcome::Success {})
+            && event.execution_id() == ExecutionId::from_raw(48)));
+    assert_eq!(events[0].parent(), None);
+    assert_eq!(
+        events[1].parent().map(|parent| parent.pid()),
+        events[0].process().pid()
+    );
+    assert_eq!(
+        events[2].parent().map(|parent| parent.pid()),
+        events[1].process().pid()
+    );
+}
+
+#[test]
+fn failed_exec_is_attempted_only_and_pid_scope_is_per_execution() {
+    let observer = LinuxObserver::new(ExecutionId::from_raw(49));
+    let (sink, cursor) = EventSink::bounded(std::num::NonZeroUsize::new(4).unwrap());
+    let (_sink, result) = observer.run(command(&["failed-exec"], None), sink);
+    assert_eq!(result.expect("run").exit_code(), Some(0));
+    let success = cursor.try_recv().expect("root exec");
+    let failure = cursor.try_recv().expect("failed attempt");
+    assert_eq!(failure.sequence(), 1);
+    assert_eq!(failure.process().pid(), success.process().pid());
+    assert_eq!(failure.execution_id(), ExecutionId::from_raw(49));
+    assert!(matches!(
+        failure.outcome(),
+        Outcome::Failure { errno: Some(2), .. }
+    ));
+    assert!(
+        matches!(failure.resource(), ObservedResource::Executable { identity } if identity == "/drifti-fixture/no-such-executable")
+    );
+    assert!(matches!(cursor.try_recv(), Err(CursorError::Empty)));
+
+    let another = LinuxObserver::new(ExecutionId::from_raw(50));
+    let (sink, cursor) = EventSink::bounded(std::num::NonZeroUsize::new(4).unwrap());
+    let (_sink, result) = another.run(command(&["exit", "0"], None), sink);
+    result.expect("second run");
+    let event = cursor.try_recv().expect("second root exec");
+    assert_eq!(event.execution_id(), ExecutionId::from_raw(50));
+    assert_eq!(event.sequence(), 0);
 }
 
 #[derive(Debug)]

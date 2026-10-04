@@ -3,18 +3,21 @@
 
 //! [`Observer`](drifti_observer::Observer) adapter for the ptrace lifecycle.
 //!
-//! The adapter does not decode semantic events and does not advertise
-//! capability domains. [`ExecutionResult`](drifti_observer::ExecutionResult)
-//! coverage is `INCOMPLETE`. A launch or trace failure is
+//! The adapter decodes process execution. Filesystem and network decoding
+//! follow in later tasks, so coverage remains `INCOMPLETE`. A launch or trace failure is
 //! [`ObserverError::ObservationFailed`](drifti_observer::ObserverError::ObservationFailed),
 //! not a successful result.
 
 use drifti_observer::{
-    CommandSpec, EventSink, ExecutionId, ExecutionResult, ObservationFailureReason, Observer,
-    ObserverCapabilities, ObserverError,
+    CapabilityDomain, CommandSpec, EventSink, ExecutionId, ExecutionResult,
+    ObservationFailureReason, Observer, ObserverCapabilities, ObserverError,
 };
 
-use crate::lifecycle::AcknowledgeStops;
+use crate::emitter::EventEmitter;
+use crate::error::{TraceError, TraceStop};
+use crate::lifecycle::TraceVisitor;
+use crate::lineage::ThreadLineage;
+use crate::process::ProcessDecoder;
 use crate::session::TraceSession;
 
 /// Linux ptrace observer.
@@ -42,7 +45,7 @@ impl LinuxObserver {
 
 impl Observer for LinuxObserver {
     fn capabilities(&self) -> ObserverCapabilities {
-        ObserverCapabilities::new([])
+        ObserverCapabilities::new([CapabilityDomain::Process])
     }
 
     fn run(
@@ -50,8 +53,12 @@ impl Observer for LinuxObserver {
         command: CommandSpec,
         sink: EventSink,
     ) -> (EventSink, Result<ExecutionResult, ObserverError>) {
+        let mut decoder = ProcessVisitor {
+            process: ProcessDecoder::new(),
+            emitter: EventEmitter::new(&sink, self.execution_id),
+        };
         let result = TraceSession::launch(self.execution_id, command)
-            .and_then(|session| session.drive(&mut AcknowledgeStops));
+            .and_then(|session| session.drive(&mut decoder));
         let mapped = match result {
             Ok(report) => Ok(ExecutionResult::new(
                 report.execution_id(),
@@ -61,6 +68,17 @@ impl Observer for LinuxObserver {
             Err(error) => Err(map_error(error)),
         };
         (sink, mapped)
+    }
+}
+
+struct ProcessVisitor<'a> {
+    process: ProcessDecoder,
+    emitter: EventEmitter<'a>,
+}
+
+impl TraceVisitor for ProcessVisitor<'_> {
+    fn on_stop(&mut self, stop: &TraceStop, lineage: &ThreadLineage) -> Result<(), TraceError> {
+        self.process.on_stop(stop, lineage, &mut self.emitter)
     }
 }
 
