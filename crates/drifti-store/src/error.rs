@@ -96,6 +96,31 @@ pub enum StoreError {
     ExecutionIdExhausted,
     /// A stored execution row broke an invariant this repository can read.
     CorruptExecution,
+    /// No process row uses this pid inside the execution.
+    ProcessNotFound {
+        /// Canonical execution id.
+        execution_id: String,
+        /// Process id scoped to that execution.
+        pid: u32,
+    },
+    /// The same execution and pid were recorded with different lineage.
+    ProcessConflict {
+        /// Canonical execution id.
+        execution_id: String,
+        /// Process id scoped to that execution.
+        pid: u32,
+    },
+    /// Following `parent_pid` inside one execution returned to a pid already seen.
+    ProcessCycle {
+        /// Canonical execution id.
+        execution_id: String,
+        /// Process id where the walk stopped.
+        pid: u32,
+    },
+    /// A process named itself as its parent.
+    InvalidProcessParent,
+    /// A stored process row broke an invariant this repository can read.
+    CorruptProcess,
 }
 
 impl Display for StoreError {
@@ -167,6 +192,21 @@ impl Display for StoreError {
             Self::ClockOutOfRange => formatter.write_str("clock is outside the execution id range"),
             Self::ExecutionIdExhausted => formatter.write_str("execution id space is exhausted"),
             Self::CorruptExecution => formatter.write_str("execution row cannot be read honestly"),
+            Self::ProcessNotFound { execution_id, pid } => {
+                write!(formatter, "process {pid} is unknown in execution {execution_id}")
+            }
+            Self::ProcessConflict { execution_id, pid } => write!(
+                formatter,
+                "process {pid} in execution {execution_id} was already recorded with different lineage"
+            ),
+            Self::ProcessCycle { execution_id, pid } => write!(
+                formatter,
+                "process {pid} in execution {execution_id} has a parent cycle"
+            ),
+            Self::InvalidProcessParent => {
+                formatter.write_str("a process cannot be its own parent")
+            }
+            Self::CorruptProcess => formatter.write_str("process row cannot be read honestly"),
         }
     }
 }
@@ -192,7 +232,12 @@ impl Error for StoreError {
             | Self::InvalidExecutionId
             | Self::ClockOutOfRange
             | Self::ExecutionIdExhausted
-            | Self::CorruptExecution => None,
+            | Self::CorruptExecution
+            | Self::ProcessNotFound { .. }
+            | Self::ProcessConflict { .. }
+            | Self::ProcessCycle { .. }
+            | Self::InvalidProcessParent
+            | Self::CorruptProcess => None,
         }
     }
 }
