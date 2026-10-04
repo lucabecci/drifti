@@ -34,8 +34,8 @@ pub use coverage::{
     CapabilityDomain, CoverageError, ExecutionCoverage, ObservationCoverage, ObserverCapabilities,
 };
 pub use event::{
-    EventError, EvidenceMeta, ExecutionId, FailureReason, MonotonicTimestamp, ObservedEvent,
-    ObservedResource, Operation, Outcome, ParentIdentity, ProcessIdentity,
+    EventError, EvidenceMeta, ExecutionId, FailureReason, MonotonicTimestamp, NetworkProtocol,
+    ObservedEvent, ObservedResource, Operation, Outcome, ParentIdentity, ProcessIdentity,
 };
 pub use mock::{MockError, MockObserver, ObservationScript};
 pub use observer::{
