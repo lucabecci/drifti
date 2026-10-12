@@ -3,22 +3,24 @@
 
 //! [`Observer`](drifti_observer::Observer) adapter for the ptrace lifecycle.
 //!
-//! The adapter decodes process execution. Filesystem and network decoding
-//! follow in later tasks, so coverage remains `INCOMPLETE`. A launch or trace failure is
+//! The adapter decodes process execution and filesystem activity through one
+//! [`EventEmitter`](crate::emitter::EventEmitter). Network decoding is a later
+//! task, so coverage remains `INCOMPLETE`. A launch or trace failure is
 //! [`ObserverError::ObservationFailed`](drifti_observer::ObserverError::ObservationFailed),
 //! not a successful result.
 
 use drifti_observer::{
-    CapabilityDomain, CommandSpec, EventSink, ExecutionId, ExecutionResult,
-    ObservationFailureReason, Observer, ObserverCapabilities, ObserverError,
+    CapabilityDomain, CommandSpec, EventSink, ExecutionCoverage, ExecutionId, ExecutionResult,
+    ObservationCoverage, ObservationFailureReason, Observer, ObserverCapabilities, ObserverError,
 };
 
 use crate::emitter::EventEmitter;
-use crate::error::{TraceError, TraceStop};
+use crate::error::{ObservationGap, TraceError, TraceStop};
+use crate::filesystem::{FilesystemDecodeError, FilesystemDecoder};
 use crate::lifecycle::TraceVisitor;
 use crate::lineage::ThreadLineage;
 use crate::process::ProcessDecoder;
-use crate::session::TraceSession;
+use crate::session::{SessionLimits, TraceSession};
 
 /// Linux ptrace observer.
 ///
@@ -45,7 +47,11 @@ impl LinuxObserver {
 
 impl Observer for LinuxObserver {
     fn capabilities(&self) -> ObserverCapabilities {
-        ObserverCapabilities::new([CapabilityDomain::Process])
+        let mut domains = vec![CapabilityDomain::Process];
+        if cfg!(target_arch = "x86_64") {
+            domains.push(CapabilityDomain::Filesystem);
+        }
+        ObserverCapabilities::new(domains)
     }
 
     fn run(
@@ -53,16 +59,19 @@ impl Observer for LinuxObserver {
         command: CommandSpec,
         sink: EventSink,
     ) -> (EventSink, Result<ExecutionResult, ObserverError>) {
-        let mut decoder = ProcessVisitor {
+        let mut decoder = ExecutionVisitor {
             process: ProcessDecoder::new(),
+            filesystem: FilesystemDecoder::new(SessionLimits::production().max_tracees),
             emitter: EventEmitter::new(&sink, self.execution_id),
+            filesystem_unsupported: !cfg!(target_arch = "x86_64"),
         };
         let result = TraceSession::launch(self.execution_id, command)
             .and_then(|session| session.drive(&mut decoder));
+        let filesystem_unsupported = decoder.filesystem_unsupported;
         let mapped = match result {
             Ok(report) => Ok(ExecutionResult::new(
                 report.execution_id(),
-                report.bootstrap_coverage(),
+                execution_coverage(filesystem_unsupported),
                 report.exit_code(),
             )),
             Err(error) => Err(map_error(error)),
@@ -71,14 +80,79 @@ impl Observer for LinuxObserver {
     }
 }
 
-struct ProcessVisitor<'a> {
-    process: ProcessDecoder,
-    emitter: EventEmitter<'a>,
+fn execution_coverage(filesystem_unsupported: bool) -> ExecutionCoverage {
+    if filesystem_unsupported {
+        ExecutionCoverage::declared(
+            ObservationCoverage::Incomplete,
+            [CapabilityDomain::Filesystem],
+        )
+        .expect("incomplete coverage may name an unsupported domain")
+    } else {
+        ExecutionCoverage::no_events_seen()
+    }
 }
 
-impl TraceVisitor for ProcessVisitor<'_> {
+struct ExecutionVisitor<'a> {
+    process: ProcessDecoder,
+    filesystem: FilesystemDecoder,
+    emitter: EventEmitter<'a>,
+    filesystem_unsupported: bool,
+}
+
+impl TraceVisitor for ExecutionVisitor<'_> {
     fn on_stop(&mut self, stop: &TraceStop, lineage: &ThreadLineage) -> Result<(), TraceError> {
-        self.process.on_stop(stop, lineage, &mut self.emitter)
+        if let TraceStop::Gap(gap) = stop {
+            let tid = gap_tid(*gap);
+            if self.filesystem.has_pending(tid) {
+                return Err(TraceError::FilesystemDecode);
+            }
+            self.filesystem.on_gap(tid);
+        }
+        if let TraceStop::ProcessExited { tid, .. } | TraceStop::ProcessSignaled { tid, .. } = stop
+        {
+            if self.filesystem.has_pending(*tid) {
+                return Err(TraceError::FilesystemDecode);
+            }
+        }
+        self.process.on_stop(stop, lineage, &mut self.emitter)?;
+        if let TraceStop::Syscall(syscall) = stop {
+            match self.filesystem.on_syscall(syscall) {
+                Ok(facts) => {
+                    for fact in facts {
+                        self.emitter.emit(
+                            lineage,
+                            fact.tid,
+                            fact.operation,
+                            fact.resource,
+                            fact.outcome,
+                        )?;
+                    }
+                }
+                Err(FilesystemDecodeError::UnsupportedAbi) => {
+                    self.filesystem_unsupported = true;
+                }
+                Err(_) => return Err(TraceError::FilesystemDecode),
+            }
+        }
+        Ok(())
+    }
+}
+
+fn gap_tid(gap: ObservationGap) -> u32 {
+    match gap {
+        ObservationGap::SyscallPhaseMismatch { tid, .. }
+        | ObservationGap::UnaffiliatedTracee { tid }
+        | ObservationGap::ParentConflict { tid, .. }
+        | ObservationGap::InvalidEventMessage { tid }
+        | ObservationGap::UnknownPtraceEvent { tid, .. }
+        | ObservationGap::Continued { tid }
+        | ObservationGap::SeccompStop { tid }
+        | ObservationGap::ProcStatusUnreadable { tid }
+        | ObservationGap::TgidConflict { tid, .. }
+        | ObservationGap::ExecWithUnknownTgid { tid }
+        | ObservationGap::ExecRetiredThread { tid }
+        | ObservationGap::PidfdUnavailable { tid }
+        | ObservationGap::UntrackedWait { tid } => tid,
     }
 }
 
@@ -93,4 +167,40 @@ fn map_error(error: crate::error::TraceError) -> ObserverError {
             }
     ));
     mapped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{execution_coverage, LinuxObserver};
+    use drifti_observer::{CapabilityDomain, ExecutionId, ObservationCoverage, Observer};
+
+    #[test]
+    fn unsupported_filesystem_abi_degrades_coverage() {
+        let coverage = execution_coverage(true);
+        assert_eq!(coverage.status(), ObservationCoverage::Incomplete);
+        assert!(coverage
+            .unsupported_domains()
+            .contains(&CapabilityDomain::Filesystem));
+        assert!(!coverage.is_complete());
+    }
+
+    #[test]
+    fn supported_filesystem_abi_stays_incomplete() {
+        let coverage = execution_coverage(false);
+        assert_eq!(coverage.status(), ObservationCoverage::Incomplete);
+        assert!(coverage.unsupported_domains().is_empty());
+        assert!(!coverage.is_complete());
+    }
+
+    #[test]
+    fn capabilities_advertise_filesystem_only_on_x86_64() {
+        let observer = LinuxObserver::new(ExecutionId::from_raw(1));
+        assert!(observer.capabilities().observes(CapabilityDomain::Process));
+        assert_eq!(
+            observer
+                .capabilities()
+                .observes(CapabilityDomain::Filesystem),
+            cfg!(target_arch = "x86_64")
+        );
+    }
 }
