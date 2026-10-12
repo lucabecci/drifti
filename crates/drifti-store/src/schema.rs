@@ -51,6 +51,15 @@ pub const MAX_NETWORK_HOST_BYTES: usize = 255;
 
 const UNIT: char = '\u{1f}';
 
+/// Marker table for a batch that was not committed.
+///
+/// Fresh databases and version-1 files opened later use the same statement.
+/// SQLite stores it without `IF NOT EXISTS`.
+pub(crate) const EVENT_FAILURE_TABLE: &str = "\
+    CREATE TABLE IF NOT EXISTS execution_event_failures (
+        execution_id TEXT PRIMARY KEY REFERENCES executions (execution_id) ON DELETE CASCADE
+    )";
+
 /// DDL for a new database, in application order.
 ///
 /// `sqlite_master.sql` for two fresh databases matches because this list
@@ -80,6 +89,7 @@ pub(crate) const DDL: &[&str] = &[
         ),
         tool_version TEXT CHECK (tool_version IS NULL OR length(tool_version) > 0)
     )",
+    EVENT_FAILURE_TABLE,
     "\
     CREATE TABLE execution_unsupported_domains (
         execution_id TEXT NOT NULL REFERENCES executions (execution_id),

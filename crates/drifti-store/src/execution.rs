@@ -487,12 +487,6 @@ impl Store {
         if finish.coverage.is_complete() && !finish.unsupported_domains.is_empty() {
             return Err(StoreError::CompleteWhileUnsupported);
         }
-        // A failed event batch is not COMPLETE coverage. The caller still holds
-        // the events. This process will not record COMPLETE until a later batch
-        // for the same execution commits.
-        if finish.coverage.is_complete() && self.event_write_failures.contains(id) {
-            return Err(StoreError::StorageFailureBlocksComplete);
-        }
         let path = self.path.clone();
         let transaction = self
             .connection
@@ -517,7 +511,16 @@ impl Store {
                     id: id.as_str().to_owned(),
                 })
             }
-            Some("started") => {}
+            Some("started") => {
+                // A failed batch stays unpersisted. COMPLETE stays refused
+                // after this process exits until a later batch commits.
+                if finish.coverage.is_complete()
+                    && (self.event_write_failures.contains(id)
+                        || event_failure_marked(&transaction, &path, id)?)
+                {
+                    return Err(StoreError::StorageFailureBlocksComplete);
+                }
+            }
             Some(_) => return Err(StoreError::CorruptExecution),
         }
         let changed = transaction
@@ -710,6 +713,22 @@ fn random_tail(connection: &Connection) -> Result<u128, rusqlite::Error> {
         tail = (tail << 8) | u128::from(byte);
     }
     Ok(tail)
+}
+
+fn event_failure_marked(
+    connection: &Connection,
+    path: &std::path::Path,
+    id: &ExecutionId,
+) -> Result<bool, StoreError> {
+    let marked: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM execution_event_failures WHERE execution_id = ?1",
+            params![id.as_str()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|source| map_sqlite(path, source))?;
+    Ok(marked.is_some())
 }
 
 fn optional_version(value: Option<&str>) -> Result<Option<String>, StoreError> {

@@ -110,7 +110,9 @@ impl EventBatchWriter {
         };
         match commit_batch(store, execution_id, &encoded) {
             Ok(()) => {
-                store.event_write_failures.remove(execution_id);
+                if let Err(source) = clear_event_write_failure(store, execution_id) {
+                    return Err(note_failure(store, execution_id, events, source));
+                }
                 Ok(events.len())
             }
             Err(source) => Err(note_failure(store, execution_id, events, source)),
@@ -272,7 +274,7 @@ fn note_failure(
     events: Vec<ObservedEvent>,
     source: StoreError,
 ) -> EventWriteError {
-    store.event_write_failures.insert(execution_id.clone());
+    remember_event_write_failure(store, execution_id);
     EventWriteError {
         persisted: 0,
         unpersisted: events,
@@ -291,6 +293,32 @@ fn take_queued(
     }
     error.persisted = persisted_before.saturating_add(error.persisted);
     error
+}
+
+fn remember_event_write_failure(store: &mut Store, execution_id: &ExecutionId) {
+    store.event_write_failures.insert(execution_id.clone());
+    // A missing execution cannot hold the marker. The caller still receives
+    // the original error and the unpersisted events.
+    let _ = store.connection.execute(
+        "INSERT OR IGNORE INTO execution_event_failures (execution_id) VALUES (?1)",
+        params![execution_id.as_str()],
+    );
+}
+
+fn clear_event_write_failure(
+    store: &mut Store,
+    execution_id: &ExecutionId,
+) -> Result<(), StoreError> {
+    let path = store.path.clone();
+    store
+        .connection
+        .execute(
+            "DELETE FROM execution_event_failures WHERE execution_id = ?1",
+            params![execution_id.as_str()],
+        )
+        .map_err(|source| map_sqlite(&path, source))?;
+    store.event_write_failures.remove(execution_id);
+    Ok(())
 }
 
 fn encode_event(

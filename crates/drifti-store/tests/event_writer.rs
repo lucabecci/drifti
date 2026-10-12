@@ -237,6 +237,47 @@ fn successful_retry_after_rollback_can_record_complete() {
 }
 
 #[test]
+fn reopened_store_still_refuses_complete_after_a_failed_batch() {
+    let workspace = TempWorkspace::new("reopen-failure");
+    let mut store = Store::open(workspace.path()).expect("open");
+    let id = started(&mut store);
+    let writer = EventBatchWriter::new(NonZeroUsize::new(4).expect("limit"));
+    let events = vec![
+        sample(&id, 1, 1, "/tmp/a", Outcome::success()),
+        sample(&id, 1, 2, "/tmp/b", Outcome::success()),
+    ];
+    let error = writer
+        .write_batch(&mut store, &id, events)
+        .expect_err("duplicate sequence");
+    assert!(!error.allows_complete_coverage());
+    drop(store);
+
+    let mut store = Store::open(workspace.path()).expect("reopen");
+    let record = store.get_execution(&id).expect("still started");
+    assert!(record.coverage().is_none());
+    assert!(!record.is_complete());
+    let complete = FinishExecution::try_new(CoverageStatus::Complete, [], Some(0), None, None)
+        .expect("finish value");
+    let refused = store
+        .finish_execution(&id, complete)
+        .expect_err("reopen keeps the failure");
+    assert!(matches!(refused, StoreError::StorageFailureBlocksComplete));
+
+    let recovered = sample(&id, 1, 3, "/tmp/kept", Outcome::success());
+    writer
+        .write_batch(&mut store, &id, vec![recovered])
+        .expect("later batch clears the marker");
+    let finished = store
+        .finish_execution(
+            &id,
+            FinishExecution::try_new(CoverageStatus::Complete, [], Some(0), None, None)
+                .expect("finish value"),
+        )
+        .expect("complete after a committed batch");
+    assert!(finished.is_complete());
+}
+
+#[test]
 fn missing_execution_returns_the_batch_and_writes_nothing() {
     let workspace = TempWorkspace::new("missing");
     let mut store = Store::open(workspace.path()).expect("open");

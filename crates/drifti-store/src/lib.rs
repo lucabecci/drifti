@@ -53,7 +53,7 @@ pub use schema::{
 };
 
 use execution::IdGenerator;
-use schema::DDL;
+use schema::{DDL, EVENT_FAILURE_TABLE};
 
 /// Open SQLite file under `{workspace}/.drifti/state.db`.
 #[derive(Debug)]
@@ -61,8 +61,9 @@ pub struct Store {
     path: PathBuf,
     connection: Connection,
     ids: IdGenerator,
-    /// Executions whose event batch failed in this process and has not since
-    /// been committed. `COMPLETE` is refused for these ids.
+    /// Executions whose event batch failed and has not since been committed.
+    /// The same ids are stored in `execution_event_failures`, so a later open
+    /// still refuses `COMPLETE`.
     event_write_failures: BTreeSet<ExecutionId>,
 }
 
@@ -89,6 +90,11 @@ impl Store {
             }
             Inspect::Compatible => {
                 let connection = open_read_write(&path)?;
+                // Version 1 databases created before the failure marker existed
+                // gain the empty table here. Rows are not rewritten.
+                connection
+                    .execute_batch(EVENT_FAILURE_TABLE)
+                    .map_err(|source| map_sqlite(&path, source))?;
                 Ok(opened(path, connection))
             }
             Inspect::Incompatible { found } => Err(StoreError::IncompatibleSchema {
