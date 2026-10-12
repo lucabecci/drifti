@@ -3,22 +3,31 @@
 
 //! Linux lifecycle tests. They use the `lifecycle-tracee` and
 //! `lifecycle-tracer` fixtures and do not attach to an arbitrary pid.
+//!
+//! A session collects stops with `waitpid(-1)`. That reaps any child of this
+//! process, so these tests share one lock and do not run beside each other.
 
 #![cfg(target_os = "linux")]
 
 use std::collections::BTreeMap;
 use std::process::Command;
+use std::sync::MutexGuard;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use drifti_observer::{
-    CapabilityDomain, CommandSpec, CursorError, EventSink, ExecutionId, ObservationCoverage,
-    ObservedResource, Observer, Operation, Outcome,
+    CapabilityDomain, CommandSpec, CursorError, EventSink, ExecutionId, ExecutionResult,
+    ObservationCoverage, ObservedEvent, ObservedResource, Observer, Operation, Outcome,
 };
 use drifti_observer_linux::{
     LinuxObserver, ObservationGap, ObservedSyscall, SessionLimits, ThreadLineage, TraceError,
     TraceSession, TraceStop, TraceVisitor,
 };
+
+fn exclusive_tracer() -> MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn limits() -> SessionLimits {
     SessionLimits {
@@ -50,6 +59,33 @@ fn env_tracer() -> &'static str {
     env!("CARGO_BIN_EXE_lifecycle-tracer")
 }
 
+fn run_observer(
+    execution: u64,
+    args: &[&str],
+    cwd: Option<&str>,
+) -> (ExecutionResult, Vec<ObservedEvent>) {
+    let observer = LinuxObserver::new(ExecutionId::from_raw(u128::from(execution)));
+    let (sink, cursor) = EventSink::bounded(std::num::NonZeroUsize::new(64).unwrap());
+    let collector = thread::spawn(move || {
+        let mut events = Vec::new();
+        loop {
+            match cursor.recv() {
+                Ok(event) => events.push(event),
+                Err(CursorError::Disconnected) => break,
+                Err(CursorError::Empty | CursorError::TimedOut) => {}
+            }
+        }
+        events
+    });
+    let (sink, result) = observer.run(command(args, cwd), sink);
+    drop(sink);
+    let events = collector.join().expect("event collector");
+    (
+        result.unwrap_or_else(|error| panic!("observer run failed: {error}")),
+        events,
+    )
+}
+
 fn drive(args: &[&str]) -> drifti_observer_linux::TraceReport {
     let session =
         TraceSession::launch_with_limits(ExecutionId::from_raw(47), command(args, None), limits())
@@ -61,6 +97,7 @@ fn drive(args: &[&str]) -> drifti_observer_linux::TraceReport {
 
 #[test]
 fn exit_code_is_observed_and_coverage_is_incomplete() {
+    let _exclusive = exclusive_tracer();
     let report = drive(&["exit", "7"]);
     assert_eq!(report.exit_code(), Some(7));
     assert!(report.stops_delivered() > 0);
@@ -79,6 +116,7 @@ fn exit_code_is_observed_and_coverage_is_incomplete() {
 
 #[test]
 fn child_and_grandchild_remain_attached() {
+    let _exclusive = exclusive_tracer();
     let report = drive(&["tree"]);
     let root = report.lineage().root().expect("root");
     let child = report
@@ -99,6 +137,7 @@ fn child_and_grandchild_remain_attached() {
 
 #[test]
 fn syscall_entry_and_exit_alternate_per_thread() {
+    let _exclusive = exclusive_tracer();
     let mut phases = Phases::default();
     let session = TraceSession::launch_with_limits(
         ExecutionId::from_raw(47),
@@ -122,6 +161,7 @@ fn syscall_entry_and_exit_alternate_per_thread() {
 
 #[test]
 fn launch_failure_does_not_echo_argument_values() {
+    let _exclusive = exclusive_tracer();
     let command = command(
         &["SUPER_SECRET_ARG", "exit", "0"],
         Some("/no/such/drifti-cwd"),
@@ -145,6 +185,7 @@ fn launch_failure_does_not_echo_argument_values() {
 
 #[test]
 fn successful_report_does_not_contain_argument_values() {
+    let _exclusive = exclusive_tracer();
     let session = TraceSession::launch_with_limits(
         ExecutionId::from_raw(47),
         command(&["SUPER_SECRET_ARG", "exit", "0"], None),
@@ -159,6 +200,7 @@ fn successful_report_does_not_contain_argument_values() {
 
 #[test]
 fn stop_limit_is_not_success() {
+    let _exclusive = exclusive_tracer();
     let mut tight = limits();
     tight.max_stops = 1;
     let session = TraceSession::launch_with_limits(
@@ -176,6 +218,7 @@ fn stop_limit_is_not_success() {
 
 #[test]
 fn visitor_rejection_kills_the_tracee() {
+    let _exclusive = exclusive_tracer();
     let session = TraceSession::launch_with_limits(
         ExecutionId::from_raw(47),
         command(&["sleep"], None),
@@ -193,6 +236,7 @@ fn visitor_rejection_kills_the_tracee() {
 
 #[test]
 fn tracer_exit_kills_the_tracee() {
+    let _exclusive = exclusive_tracer();
     let output = Command::new(env_tracer())
         .arg(env_tracee())
         .output()
@@ -209,67 +253,74 @@ fn tracer_exit_kills_the_tracee() {
 
 #[test]
 fn observer_run_emits_resolved_process_event_and_is_incomplete() {
+    let _exclusive = exclusive_tracer();
     let observer = LinuxObserver::new(ExecutionId::from_raw(47));
     assert!(observer.capabilities().observes(CapabilityDomain::Process));
-    let (sink, cursor) = EventSink::bounded(std::num::NonZeroUsize::new(4).unwrap());
-    let (_sink, result) = observer.run(command(&["exit", "0"], None), sink);
-    let result = result.expect("run");
+    assert_eq!(
+        observer
+            .capabilities()
+            .observes(CapabilityDomain::Filesystem),
+        cfg!(target_arch = "x86_64")
+    );
+    let (result, events) = run_observer(47, &["exit", "0"], None);
     assert_eq!(result.exit_code(), Some(0));
     assert!(!result.coverage().is_complete());
     assert_eq!(result.coverage().status(), ObservationCoverage::Incomplete);
-    let event = cursor.try_recv().expect("root exec event");
-    assert_eq!(event.operation(), Operation::ProcessExecute);
-    assert!(matches!(event.outcome(), Outcome::Success {}));
+    let event = events
+        .iter()
+        .find(|event| event.operation() == Operation::ProcessExecute)
+        .expect("root exec event");
+    assert!(event.was_exercised());
     assert_eq!(event.execution_id(), ExecutionId::from_raw(47));
     assert_eq!(event.parent(), None);
     assert!(
         matches!(event.resource(), ObservedResource::Executable { identity } if identity == env_tracee())
     );
-    assert!(matches!(cursor.try_recv(), Err(CursorError::Empty)));
 }
 
 #[test]
 fn child_and_grandchild_exec_events_keep_parent_identity() {
-    let observer = LinuxObserver::new(ExecutionId::from_raw(48));
-    let (sink, cursor) = EventSink::bounded(std::num::NonZeroUsize::new(8).unwrap());
-    let (_sink, result) = observer.run(command(&["exec-tree"], None), sink);
-    assert_eq!(result.expect("run").exit_code(), Some(0));
-    let events: Vec<_> = (0..3)
-        .map(|_| cursor.try_recv().expect("exec event"))
-        .collect();
-    assert!(matches!(cursor.try_recv(), Err(CursorError::Empty)));
-    assert_eq!(
-        events
-            .iter()
-            .map(|event| event.sequence())
-            .collect::<Vec<_>>(),
-        vec![0, 1, 2]
-    );
-    assert!(events
+    let _exclusive = exclusive_tracer();
+    let (result, events) = run_observer(48, &["exec-tree"], None);
+    assert_eq!(result.exit_code(), Some(0));
+    let execs: Vec<_> = events
         .iter()
-        .all(|event| event.operation() == Operation::ProcessExecute
-            && matches!(event.outcome(), Outcome::Success {})
-            && event.execution_id() == ExecutionId::from_raw(48)));
-    assert_eq!(events[0].parent(), None);
+        .filter(|event| event.operation() == Operation::ProcessExecute)
+        .collect();
+    assert_eq!(execs.len(), 3);
+    assert!(execs
+        .windows(2)
+        .all(|pair| pair[0].sequence() < pair[1].sequence()));
+    assert!(execs.iter().all(|event| {
+        event.was_exercised() && event.execution_id() == ExecutionId::from_raw(48)
+    }));
+    assert_eq!(execs[0].parent(), None);
     assert_eq!(
-        events[1].parent().map(|parent| parent.pid()),
-        events[0].process().pid()
+        execs[1].parent().map(|parent| parent.pid()),
+        execs[0].process().pid()
     );
     assert_eq!(
-        events[2].parent().map(|parent| parent.pid()),
-        events[1].process().pid()
+        execs[2].parent().map(|parent| parent.pid()),
+        execs[1].process().pid()
     );
 }
 
 #[test]
 fn failed_exec_is_attempted_only_and_pid_scope_is_per_execution() {
-    let observer = LinuxObserver::new(ExecutionId::from_raw(49));
-    let (sink, cursor) = EventSink::bounded(std::num::NonZeroUsize::new(4).unwrap());
-    let (_sink, result) = observer.run(command(&["failed-exec"], None), sink);
-    assert_eq!(result.expect("run").exit_code(), Some(0));
-    let success = cursor.try_recv().expect("root exec");
-    let failure = cursor.try_recv().expect("failed attempt");
-    assert_eq!(failure.sequence(), 1);
+    let _exclusive = exclusive_tracer();
+    let (result, events) = run_observer(49, &["failed-exec"], None);
+    assert_eq!(result.exit_code(), Some(0));
+    let success = events
+        .iter()
+        .find(|event| event.operation() == Operation::ProcessExecute && event.was_exercised())
+        .expect("root exec");
+    let failure = events
+        .iter()
+        .find(|event| event.operation() == Operation::ProcessExecute && !event.was_exercised())
+        .expect("failed attempt");
+    assert!(failure.sequence() > success.sequence());
+    assert!(failure.was_attempted());
+    assert!(!failure.was_exercised());
     assert_eq!(failure.process().pid(), success.process().pid());
     assert_eq!(failure.execution_id(), ExecutionId::from_raw(49));
     assert!(matches!(
@@ -279,13 +330,12 @@ fn failed_exec_is_attempted_only_and_pid_scope_is_per_execution() {
     assert!(
         matches!(failure.resource(), ObservedResource::Executable { identity } if identity == "/drifti-fixture/no-such-executable")
     );
-    assert!(matches!(cursor.try_recv(), Err(CursorError::Empty)));
 
-    let another = LinuxObserver::new(ExecutionId::from_raw(50));
-    let (sink, cursor) = EventSink::bounded(std::num::NonZeroUsize::new(4).unwrap());
-    let (_sink, result) = another.run(command(&["exit", "0"], None), sink);
-    result.expect("second run");
-    let event = cursor.try_recv().expect("second root exec");
+    let (_result, events) = run_observer(50, &["exit", "0"], None);
+    let event = events
+        .iter()
+        .find(|event| event.operation() == Operation::ProcessExecute && event.was_exercised())
+        .expect("second root exec");
     assert_eq!(event.execution_id(), ExecutionId::from_raw(50));
     assert_eq!(event.sequence(), 0);
 }
