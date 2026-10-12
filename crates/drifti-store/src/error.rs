@@ -3,8 +3,8 @@
 
 //! Failures while opening or describing the execution store.
 //!
-//! An incompatible database is left on disk. This type has no variant that
-//! deletes history.
+//! An incompatible database is left on disk. A failed migration is rolled
+//! back. This type has no variant that deletes history.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -57,6 +57,25 @@ pub enum StoreError {
         found: Option<i64>,
         /// Version this process knows how to open.
         expected: i64,
+    },
+    /// A forward migration failed and was rolled back.
+    ///
+    /// `version` is the schema version still stored. The database file is
+    /// not deleted.
+    MigrationFailed {
+        /// Database path.
+        path: PathBuf,
+        /// Version still stored after the rollback.
+        version: i64,
+        /// Statement that failed.
+        source: rusqlite::Error,
+    },
+    /// The crate's migration plan is not a contiguous forward sequence.
+    ///
+    /// The database file is not modified.
+    InvalidMigrationPlan {
+        /// Database path.
+        path: PathBuf,
     },
     /// A canonical resource field was empty.
     EmptyIdentity,
@@ -175,6 +194,20 @@ impl Display for StoreError {
                     path.display()
                 ),
             },
+            Self::MigrationFailed {
+                path,
+                version,
+                source,
+            } => write!(
+                formatter,
+                "{} migration failed at schema version {version} and was rolled back: {source}",
+                path.display()
+            ),
+            Self::InvalidMigrationPlan { path } => write!(
+                formatter,
+                "{} migration plan is not a contiguous forward sequence",
+                path.display()
+            ),
             Self::EmptyIdentity => formatter.write_str("canonical resource field is empty"),
             Self::IdentityTooLong => {
                 formatter.write_str("canonical resource field exceeds 4096 bytes")
@@ -255,9 +288,12 @@ impl Error for StoreError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::CreateStateDir { source, .. } | Self::ReadMetadata { source, .. } => Some(source),
-            Self::NotADatabase { source, .. } | Self::Sqlite { source, .. } => Some(source),
+            Self::NotADatabase { source, .. }
+            | Self::Sqlite { source, .. }
+            | Self::MigrationFailed { source, .. } => Some(source),
             Self::DatabasePathIsDirectory { .. }
             | Self::IncompatibleSchema { .. }
+            | Self::InvalidMigrationPlan { .. }
             | Self::EmptyIdentity
             | Self::IdentityTooLong
             | Self::EmbeddedNul
