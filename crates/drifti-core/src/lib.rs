@@ -26,10 +26,13 @@
 //! paths renders a terminal.
 //! [`diff::diff`] normalizes a reference set and a current set, then groups
 //! each side by capability identity. The same canonical set yields an empty
-//! [`drift::DriftResult`]. [`drift::DriftKind`] names the structural changes
-//! `ADDED`, `REMOVED`, `EXPANDED`, and `REDUCED`. A [`drift::DriftFinding`]
-//! records one kind and may carry severity metadata later. This boundary does
-//! not assign those kinds and does not infer intent.
+//! [`drift::DriftResult`]. A capability present only in the current set is
+//! [`drift::DriftKind::Added`]. One present only in the reference set is
+//! [`drift::DriftKind::Removed`]. Action is part of that identity, so a
+//! different action is removal plus addition. Containment is not classified
+//! as expansion or reduction here. A [`drift::DriftFinding`] may carry
+//! severity metadata later. This comparison leaves severity unset and does
+//! not infer intent.
 //! [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]
