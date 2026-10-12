@@ -66,6 +66,9 @@ fn store_depends_on_sqlite_and_not_on_core() {
 
 #[test]
 fn core_does_not_issue_sql() {
+    // KAN-58 has no drifti-core consumer. Execution, event, and lineage reads
+    // are repository methods on drifti-store. This scan fails if the domain
+    // crate opens SQLite or embeds a query.
     let core = crate_dir().join("../drifti-core");
     let manifest = fs::read_to_string(core.join("Cargo.toml")).expect("read core manifest");
     for forbidden in ["rusqlite", "libsqlite3-sys", "sqlx", "drifti-store"] {
@@ -76,7 +79,18 @@ fn core_does_not_issue_sql() {
     }
     for path in rust_sources(&core.join("src")) {
         let source = fs::read_to_string(&path).expect("read core source");
-        for token in ["rusqlite", "libsqlite3", "PRAGMA ", "sqlite3_"] {
+        for token in [
+            "rusqlite",
+            "libsqlite3",
+            "sqlite3_open",
+            "Connection::open",
+            "PRAGMA ",
+            "sqlite3_",
+            "state.db",
+            "SELECT ",
+            "INSERT ",
+            "idx_events_",
+        ] {
             assert!(
                 !source.contains(token),
                 "{} contains {token}",

@@ -98,6 +98,10 @@ pub enum StoreError {
     ExecutionIdExhausted,
     /// A stored execution row broke an invariant this repository can read.
     CorruptExecution,
+    /// A stored event row broke an invariant this repository can read.
+    ///
+    /// The read fails. It does not skip the row.
+    CorruptEvent,
     /// No process row uses this pid inside the execution.
     ProcessNotFound {
         /// Canonical execution id.
@@ -209,6 +213,7 @@ impl Display for StoreError {
             Self::ClockOutOfRange => formatter.write_str("clock is outside the execution id range"),
             Self::ExecutionIdExhausted => formatter.write_str("execution id space is exhausted"),
             Self::CorruptExecution => formatter.write_str("execution row cannot be read honestly"),
+            Self::CorruptEvent => formatter.write_str("event row cannot be read honestly"),
             Self::ProcessNotFound { execution_id, pid } => {
                 write!(formatter, "process {pid} is unknown in execution {execution_id}")
             }
@@ -268,6 +273,7 @@ impl Error for StoreError {
             | Self::ClockOutOfRange
             | Self::ExecutionIdExhausted
             | Self::CorruptExecution
+            | Self::CorruptEvent
             | Self::ProcessNotFound { .. }
             | Self::ProcessConflict { .. }
             | Self::ProcessCycle { .. }

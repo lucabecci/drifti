@@ -46,6 +46,14 @@ pub trait ExecutionRepository {
     /// Reads one execution. The id must already be canonical.
     fn get_execution(&self, id: &ExecutionId) -> Result<ExecutionRecord, StoreError>;
 
+    /// Every execution, ordered by [`ExecutionId`].
+    ///
+    /// The id is time-sortable, so this is the history order. An empty store
+    /// is an empty list. That is not a missing execution. Coverage on each
+    /// record is the stored declaration. Absence means the execution is still
+    /// started, and absence is not `COMPLETE`.
+    fn list_executions(&self) -> Result<Vec<ExecutionRecord>, StoreError>;
+
     /// Marks a started execution finished.
     ///
     /// A second finish fails and leaves the first record in place. `COMPLETE`
@@ -432,6 +440,16 @@ impl Store {
         load_execution(&self.connection, &self.path, id)
     }
 
+    /// Every execution, ordered by id.
+    pub fn list_executions(&self) -> Result<Vec<ExecutionRecord>, StoreError> {
+        let ids = execution_ids(&self.connection, &self.path)?;
+        let mut records = Vec::with_capacity(ids.len());
+        for id in ids {
+            records.push(load_execution(&self.connection, &self.path, &id)?);
+        }
+        Ok(records)
+    }
+
     /// Marks a started execution finished.
     pub fn finish_execution(
         &mut self,
@@ -574,6 +592,10 @@ impl ExecutionRepository for Store {
         Store::get_execution(self, id)
     }
 
+    fn list_executions(&self) -> Result<Vec<ExecutionRecord>, StoreError> {
+        Store::list_executions(self)
+    }
+
     fn finish_execution(
         &mut self,
         id: &ExecutionId,
@@ -591,6 +613,25 @@ struct RawExecution {
     arg_count: Option<i64>,
     contract_version: Option<String>,
     tool_version: Option<String>,
+}
+
+fn execution_ids(
+    connection: &Connection,
+    path: &std::path::Path,
+) -> Result<Vec<ExecutionId>, StoreError> {
+    let mut statement = connection
+        .prepare("SELECT execution_id FROM executions ORDER BY execution_id")
+        .map_err(|source| map_sqlite(path, source))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|source| map_sqlite(path, source))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        let text = row.map_err(|source| map_sqlite(path, source))?;
+        let id = ExecutionId::parse(&text).map_err(|_| StoreError::CorruptExecution)?;
+        ids.push(id);
+    }
+    Ok(ids)
 }
 
 fn load_execution(
