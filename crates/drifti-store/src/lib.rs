@@ -22,6 +22,14 @@
 //! [`events::EventBatchWriter`] persists SPEC-004 events from a bounded
 //! channel. A failed batch is returned to the caller and cannot be recorded
 //! as `COMPLETE` coverage.
+//!
+//! [`ReadRepository`] reads that history back. Event order is `sequence`.
+//! Action and canonical-resource lookups are equality queries on the schema
+//! v1 indexes `idx_events_action` and `idx_events_canonical_resource`.
+//! Process lineage remains the existing [`ProcessRepository`] lookup and is
+//! also available on [`ReadRepository`]. Coverage stays on the execution
+//! record. Outcome and evidence length stay on each event. Payloads,
+//! argument values, secrets, prompts, and file bytes are not reconstructed.
 
 #![forbid(unsafe_code)]
 
@@ -29,6 +37,7 @@ mod error;
 mod events;
 mod execution;
 mod process;
+mod read;
 mod schema;
 
 use std::collections::BTreeSet;
@@ -46,6 +55,7 @@ pub use execution::{
     ExecutionRepository, FinishExecution, Lifecycle,
 };
 pub use process::{ProcessLineage, ProcessRecord, ProcessRepository};
+pub use read::{ExecutionHistory, ReadRepository};
 pub use schema::{
     canonical_resource, parse_canonical_resource, sqlite_i64, CanonicalResource,
     OwnedCanonicalResource, DATABASE_FILE, MAX_IDENTITY_BYTES, MAX_NETWORK_HOST_BYTES,

@@ -19,6 +19,9 @@
 //! Network hosts use the SPEC-004 cap of 255 bytes. File and executable
 //! identity keep the 4096-byte field cap. Argument vectors, file bytes,
 //! network payloads, secrets, prompts, and model responses are not columns.
+//!
+//! Reads of these rows live on [`crate::ReadRepository`]. That path orders
+//! by `sequence` and does not treat the monotonic timestamp as an order key.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -347,7 +350,9 @@ fn encode_event(
     })
 }
 
-fn encode_resource(resource: &ObservedResource) -> Result<(&'static str, String), StoreError> {
+pub(crate) fn encode_resource(
+    resource: &ObservedResource,
+) -> Result<(&'static str, String), StoreError> {
     match resource {
         ObservedResource::File { path } => {
             Ok(("file", canonical_resource(CanonicalResource::File(path))?))
