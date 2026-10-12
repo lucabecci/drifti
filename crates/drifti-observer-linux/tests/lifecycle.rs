@@ -3,11 +3,15 @@
 
 //! Linux lifecycle tests. They use the `lifecycle-tracee` and
 //! `lifecycle-tracer` fixtures and do not attach to an arbitrary pid.
+//!
+//! A session collects stops with `waitpid(-1)`. That reaps any child of this
+//! process, so these tests share one lock and do not run beside each other.
 
 #![cfg(target_os = "linux")]
 
 use std::collections::BTreeMap;
 use std::process::Command;
+use std::sync::MutexGuard;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -19,6 +23,11 @@ use drifti_observer_linux::{
     LinuxObserver, ObservationGap, ObservedSyscall, SessionLimits, ThreadLineage, TraceError,
     TraceSession, TraceStop, TraceVisitor,
 };
+
+fn exclusive_tracer() -> MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn limits() -> SessionLimits {
     SessionLimits {
@@ -61,6 +70,7 @@ fn drive(args: &[&str]) -> drifti_observer_linux::TraceReport {
 
 #[test]
 fn exit_code_is_observed_and_coverage_is_incomplete() {
+    let _exclusive = exclusive_tracer();
     let report = drive(&["exit", "7"]);
     assert_eq!(report.exit_code(), Some(7));
     assert!(report.stops_delivered() > 0);
@@ -79,6 +89,7 @@ fn exit_code_is_observed_and_coverage_is_incomplete() {
 
 #[test]
 fn child_and_grandchild_remain_attached() {
+    let _exclusive = exclusive_tracer();
     let report = drive(&["tree"]);
     let root = report.lineage().root().expect("root");
     let child = report
@@ -99,6 +110,7 @@ fn child_and_grandchild_remain_attached() {
 
 #[test]
 fn syscall_entry_and_exit_alternate_per_thread() {
+    let _exclusive = exclusive_tracer();
     let mut phases = Phases::default();
     let session = TraceSession::launch_with_limits(
         ExecutionId::from_raw(47),
@@ -122,6 +134,7 @@ fn syscall_entry_and_exit_alternate_per_thread() {
 
 #[test]
 fn launch_failure_does_not_echo_argument_values() {
+    let _exclusive = exclusive_tracer();
     let command = command(
         &["SUPER_SECRET_ARG", "exit", "0"],
         Some("/no/such/drifti-cwd"),
@@ -145,6 +158,7 @@ fn launch_failure_does_not_echo_argument_values() {
 
 #[test]
 fn successful_report_does_not_contain_argument_values() {
+    let _exclusive = exclusive_tracer();
     let session = TraceSession::launch_with_limits(
         ExecutionId::from_raw(47),
         command(&["SUPER_SECRET_ARG", "exit", "0"], None),
@@ -159,6 +173,7 @@ fn successful_report_does_not_contain_argument_values() {
 
 #[test]
 fn stop_limit_is_not_success() {
+    let _exclusive = exclusive_tracer();
     let mut tight = limits();
     tight.max_stops = 1;
     let session = TraceSession::launch_with_limits(
@@ -176,6 +191,7 @@ fn stop_limit_is_not_success() {
 
 #[test]
 fn visitor_rejection_kills_the_tracee() {
+    let _exclusive = exclusive_tracer();
     let session = TraceSession::launch_with_limits(
         ExecutionId::from_raw(47),
         command(&["sleep"], None),
@@ -193,6 +209,7 @@ fn visitor_rejection_kills_the_tracee() {
 
 #[test]
 fn tracer_exit_kills_the_tracee() {
+    let _exclusive = exclusive_tracer();
     let output = Command::new(env_tracer())
         .arg(env_tracee())
         .output()
@@ -209,6 +226,7 @@ fn tracer_exit_kills_the_tracee() {
 
 #[test]
 fn observer_run_emits_resolved_process_event_and_is_incomplete() {
+    let _exclusive = exclusive_tracer();
     let observer = LinuxObserver::new(ExecutionId::from_raw(47));
     assert!(observer.capabilities().observes(CapabilityDomain::Process));
     let (sink, cursor) = EventSink::bounded(std::num::NonZeroUsize::new(4).unwrap());
@@ -230,6 +248,7 @@ fn observer_run_emits_resolved_process_event_and_is_incomplete() {
 
 #[test]
 fn child_and_grandchild_exec_events_keep_parent_identity() {
+    let _exclusive = exclusive_tracer();
     let observer = LinuxObserver::new(ExecutionId::from_raw(48));
     let (sink, cursor) = EventSink::bounded(std::num::NonZeroUsize::new(8).unwrap());
     let (_sink, result) = observer.run(command(&["exec-tree"], None), sink);
@@ -263,6 +282,7 @@ fn child_and_grandchild_exec_events_keep_parent_identity() {
 
 #[test]
 fn failed_exec_is_attempted_only_and_pid_scope_is_per_execution() {
+    let _exclusive = exclusive_tracer();
     let observer = LinuxObserver::new(ExecutionId::from_raw(49));
     let (sink, cursor) = EventSink::bounded(std::num::NonZeroUsize::new(4).unwrap());
     let (_sink, result) = observer.run(command(&["failed-exec"], None), sink);

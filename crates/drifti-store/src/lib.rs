@@ -18,20 +18,29 @@
 //! [`Store::create_execution`] records a started execution. It does not grant
 //! a capability. Command metadata is the program and an argument count;
 //! argument values, prompts, and responses are not columns.
+//!
+//! [`events::EventBatchWriter`] persists SPEC-004 events from a bounded
+//! channel. A failed batch is returned to the caller and cannot be recorded
+//! as `COMPLETE` coverage.
 
 #![forbid(unsafe_code)]
 
 mod error;
+mod events;
 mod execution;
 mod process;
 mod schema;
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags};
 
 pub use error::StoreError;
+pub use events::{
+    bounded_event_channel, EventBatchWriter, EventWriteError, DEFAULT_EVENT_BATCH_LIMIT,
+};
 pub use execution::{
     CapabilityDomain, CommandMetadata, CoverageStatus, ExecutionId, ExecutionRecord,
     ExecutionRepository, FinishExecution, Lifecycle,
@@ -39,12 +48,12 @@ pub use execution::{
 pub use process::{ProcessLineage, ProcessRecord, ProcessRepository};
 pub use schema::{
     canonical_resource, parse_canonical_resource, sqlite_i64, CanonicalResource,
-    OwnedCanonicalResource, DATABASE_FILE, MAX_IDENTITY_BYTES, PROHIBITED_COLUMN_NAMES,
-    SCHEMA_VERSION, STATE_DIR,
+    OwnedCanonicalResource, DATABASE_FILE, MAX_IDENTITY_BYTES, MAX_NETWORK_HOST_BYTES,
+    PROHIBITED_COLUMN_NAMES, SCHEMA_VERSION, STATE_DIR,
 };
 
 use execution::IdGenerator;
-use schema::DDL;
+use schema::{DDL, EVENT_FAILURE_TABLE};
 
 /// Open SQLite file under `{workspace}/.drifti/state.db`.
 #[derive(Debug)]
@@ -52,6 +61,10 @@ pub struct Store {
     path: PathBuf,
     connection: Connection,
     ids: IdGenerator,
+    /// Executions whose event batch failed and has not since been committed.
+    /// The same ids are stored in `execution_event_failures`, so a later open
+    /// still refuses `COMPLETE`.
+    event_write_failures: BTreeSet<ExecutionId>,
 }
 
 impl Store {
@@ -73,19 +86,16 @@ impl Store {
             Inspect::Missing | Inspect::Empty => {
                 let mut connection = open_read_write(&path)?;
                 initialize(&mut connection).map_err(|source| map_sqlite(&path, source))?;
-                Ok(Self {
-                    path,
-                    connection,
-                    ids: IdGenerator::new(),
-                })
+                Ok(opened(path, connection))
             }
             Inspect::Compatible => {
                 let connection = open_read_write(&path)?;
-                Ok(Self {
-                    path,
-                    connection,
-                    ids: IdGenerator::new(),
-                })
+                // Version 1 databases created before the failure marker existed
+                // gain the empty table here. Rows are not rewritten.
+                connection
+                    .execute_batch(EVENT_FAILURE_TABLE)
+                    .map_err(|source| map_sqlite(&path, source))?;
+                Ok(opened(path, connection))
             }
             Inspect::Incompatible { found } => Err(StoreError::IncompatibleSchema {
                 path,
@@ -142,6 +152,15 @@ fn inspect(path: &Path) -> Result<Inspect, StoreError> {
         Ok(Inspect::Compatible)
     } else {
         Ok(Inspect::Incompatible { found: stored })
+    }
+}
+
+fn opened(path: PathBuf, connection: Connection) -> Store {
+    Store {
+        path,
+        connection,
+        ids: IdGenerator::new(),
+        event_write_failures: BTreeSet::new(),
     }
 }
 

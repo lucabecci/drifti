@@ -93,8 +93,10 @@ dependencies = [
 name = "drifti-store"
 version = "0.1.0"
 dependencies = [
+ "drifti-observer",
  "proptest",
  "rusqlite",
+ "serde_json",
 ]
 
 [[package]]
