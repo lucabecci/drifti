@@ -24,6 +24,12 @@
 //! document enters through [`contract::AcceptedContract::loaded`]. Only an
 //! [`contract::AcceptedContract`] compiles into policy rules. None of these
 //! paths renders a terminal.
+//! [`diff::diff`] normalizes a reference set and a current set, then groups
+//! each side by capability identity. The same canonical set yields an empty
+//! [`drift::DriftResult`]. [`drift::DriftKind`] names the structural changes
+//! `ADDED`, `REMOVED`, `EXPANDED`, and `REDUCED`. A [`drift::DriftFinding`]
+//! records one kind and may carry severity metadata later. This boundary does
+//! not assign those kinds and does not infer intent.
 //! [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]
