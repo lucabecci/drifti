@@ -3,8 +3,10 @@
 
 //! Schema version 1 for `.drifti/state.db`.
 //!
-//! The statements below are the whole schema. A later migration task owns
-//! every change to them. This module does not delete an existing database.
+//! These statements create a new database. Opening an older version-1 file
+//! is [`crate::migrate`]'s job: the missing `execution_event_failures` table
+//! is added without raising the version. This module does not delete an
+//! existing database.
 //!
 //! Column mapping for one SPEC-004 event, none of which is a payload:
 //!
