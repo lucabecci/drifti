@@ -62,6 +62,8 @@ pub enum StoreError {
     EmptyIdentity,
     /// A canonical resource field exceeded 4096 bytes.
     IdentityTooLong,
+    /// A network host exceeded the SPEC-004 cap of 255 bytes.
+    NetworkHostTooLong,
     /// A canonical resource field contained a NUL byte.
     EmbeddedNul,
     /// Text was not a canonical resource produced by this crate.
@@ -96,6 +98,10 @@ pub enum StoreError {
     ExecutionIdExhausted,
     /// A stored execution row broke an invariant this repository can read.
     CorruptExecution,
+    /// A stored event row broke an invariant this repository can read.
+    ///
+    /// The read fails. It does not skip the row.
+    CorruptEvent,
     /// No process row uses this pid inside the execution.
     ProcessNotFound {
         /// Canonical execution id.
@@ -121,6 +127,18 @@ pub enum StoreError {
     InvalidProcessParent,
     /// A stored process row broke an invariant this repository can read.
     CorruptProcess,
+    /// Two events in one batch used the same sequence.
+    DuplicateEventSequence,
+    /// An event sequence was not after the last committed sequence.
+    SequenceRegression,
+    /// An event names a different execution than the batch target.
+    EventExecutionMismatch,
+    /// The batch was larger than the writer's bound. No row was written.
+    EventBatchTooLarge,
+    /// The cursor did not deliver an event and the batch was not committed.
+    EventCursorFailed,
+    /// This process saw a failed event batch, so `COMPLETE` is refused.
+    StorageFailureBlocksComplete,
 }
 
 impl Display for StoreError {
@@ -161,6 +179,9 @@ impl Display for StoreError {
             Self::IdentityTooLong => {
                 formatter.write_str("canonical resource field exceeds 4096 bytes")
             }
+            Self::NetworkHostTooLong => {
+                formatter.write_str("network host exceeds 255 bytes")
+            }
             Self::EmbeddedNul => {
                 formatter.write_str("canonical resource field contains a NUL byte")
             }
@@ -192,6 +213,7 @@ impl Display for StoreError {
             Self::ClockOutOfRange => formatter.write_str("clock is outside the execution id range"),
             Self::ExecutionIdExhausted => formatter.write_str("execution id space is exhausted"),
             Self::CorruptExecution => formatter.write_str("execution row cannot be read honestly"),
+            Self::CorruptEvent => formatter.write_str("event row cannot be read honestly"),
             Self::ProcessNotFound { execution_id, pid } => {
                 write!(formatter, "process {pid} is unknown in execution {execution_id}")
             }
@@ -207,6 +229,24 @@ impl Display for StoreError {
                 formatter.write_str("a process cannot be its own parent")
             }
             Self::CorruptProcess => formatter.write_str("process row cannot be read honestly"),
+            Self::DuplicateEventSequence => {
+                formatter.write_str("event batch repeats a sequence")
+            }
+            Self::SequenceRegression => {
+                formatter.write_str("event sequence is not after the last committed sequence")
+            }
+            Self::EventExecutionMismatch => {
+                formatter.write_str("event execution id does not match the batch")
+            }
+            Self::EventBatchTooLarge => {
+                formatter.write_str("event batch exceeds the bounded batch size")
+            }
+            Self::EventCursorFailed => {
+                formatter.write_str("event cursor failed before the batch was committed")
+            }
+            Self::StorageFailureBlocksComplete => {
+                formatter.write_str("storage failure blocks COMPLETE coverage")
+            }
         }
     }
 }
@@ -233,11 +273,19 @@ impl Error for StoreError {
             | Self::ClockOutOfRange
             | Self::ExecutionIdExhausted
             | Self::CorruptExecution
+            | Self::CorruptEvent
             | Self::ProcessNotFound { .. }
             | Self::ProcessConflict { .. }
             | Self::ProcessCycle { .. }
             | Self::InvalidProcessParent
-            | Self::CorruptProcess => None,
+            | Self::CorruptProcess
+            | Self::NetworkHostTooLong
+            | Self::DuplicateEventSequence
+            | Self::SequenceRegression
+            | Self::EventExecutionMismatch
+            | Self::EventBatchTooLarge
+            | Self::EventCursorFailed
+            | Self::StorageFailureBlocksComplete => None,
         }
     }
 }

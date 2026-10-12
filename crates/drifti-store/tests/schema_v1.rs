@@ -182,6 +182,10 @@ fn schema_lists_execution_process_and_event_columns() {
         ["execution_id", "domain"]
     );
     assert_eq!(
+        column_names(&path, "execution_event_failures"),
+        ["execution_id"]
+    );
+    assert_eq!(
         column_names(&path, "processes"),
         ["execution_id", "pid", "tid", "parent_pid"]
     );
@@ -206,6 +210,7 @@ fn schema_lists_execution_process_and_event_columns() {
     for table in [
         "schema_meta",
         "executions",
+        "execution_event_failures",
         "execution_unsupported_domains",
         "processes",
         "events",
@@ -252,6 +257,7 @@ fn schema_has_no_prohibited_payload_columns() {
     for table in [
         "schema_meta",
         "executions",
+        "execution_event_failures",
         "execution_unsupported_domains",
         "processes",
         "events",
