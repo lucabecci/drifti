@@ -81,6 +81,15 @@ impl ExecutionId {
         &self.0
     }
 
+    /// Bits encoded by the 32 hex characters.
+    ///
+    /// SPEC-004 events carry this value. The event writer rejects an event
+    /// whose id does not match the execution row.
+    #[must_use]
+    pub fn to_raw(&self) -> u128 {
+        u128::from_str_radix(&self.0, 16).expect("canonical execution id is hex")
+    }
+
     /// Unix millisecond prefix. This is not a PID.
     #[must_use]
     pub fn timestamp_millis(&self) -> u64 {
@@ -477,6 +486,12 @@ impl Store {
     ) -> Result<(), StoreError> {
         if finish.coverage.is_complete() && !finish.unsupported_domains.is_empty() {
             return Err(StoreError::CompleteWhileUnsupported);
+        }
+        // A failed event batch is not COMPLETE coverage. The caller still holds
+        // the events. This process will not record COMPLETE until a later batch
+        // for the same execution commits.
+        if finish.coverage.is_complete() && self.event_write_failures.contains(id) {
+            return Err(StoreError::StorageFailureBlocksComplete);
         }
         let path = self.path.clone();
         let transaction = self

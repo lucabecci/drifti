@@ -42,6 +42,13 @@ pub const DATABASE_FILE: &str = "state.db";
 /// Largest accepted canonical-resource field, in bytes.
 pub const MAX_IDENTITY_BYTES: usize = 4096;
 
+/// SPEC-004 cap for a network host, in bytes.
+///
+/// File and executable identity may use [`MAX_IDENTITY_BYTES`]. A network host
+/// may not. The event writer and [`canonical_resource`] both apply this cap,
+/// so a host of 256..=4096 bytes is not persisted.
+pub const MAX_NETWORK_HOST_BYTES: usize = 255;
+
 const UNIT: char = '\u{1f}';
 
 /// DDL for a new database, in application order.
@@ -202,6 +209,7 @@ pub fn canonical_resource(resource: CanonicalResource<'_>) -> Result<String, Sto
         CanonicalResource::File(path) => encode("file", &[path]),
         CanonicalResource::Executable(identity) => encode("executable", &[identity]),
         CanonicalResource::Network { host, port } => {
+            validate_network_host(host)?;
             let port = port.to_string();
             encode("network", &[host, port.as_str()])
         }
@@ -217,10 +225,13 @@ pub fn parse_canonical_resource(text: &str) -> Result<OwnedCanonicalResource, St
     match (kind, fields.as_slice()) {
         ("file", [path]) => Ok(OwnedCanonicalResource::File(path.clone())),
         ("executable", [identity]) => Ok(OwnedCanonicalResource::Executable(identity.clone())),
-        ("network", [host, port]) => Ok(OwnedCanonicalResource::Network {
-            host: host.clone(),
-            port: parse_port(port)?,
-        }),
+        ("network", [host, port]) => {
+            validate_network_host(host)?;
+            Ok(OwnedCanonicalResource::Network {
+                host: host.clone(),
+                port: parse_port(port)?,
+            })
+        }
         _ => Err(StoreError::InvalidCanonicalResource),
     }
 }
@@ -240,6 +251,19 @@ fn encode(kind: &str, fields: &[&str]) -> Result<String, StoreError> {
         out.push_str(field);
     }
     Ok(out)
+}
+
+fn validate_network_host(host: &str) -> Result<(), StoreError> {
+    if host.is_empty() {
+        return Err(StoreError::EmptyIdentity);
+    }
+    if host.as_bytes().contains(&0) {
+        return Err(StoreError::EmbeddedNul);
+    }
+    if host.len() > MAX_NETWORK_HOST_BYTES {
+        return Err(StoreError::NetworkHostTooLong);
+    }
+    Ok(())
 }
 
 fn validate_field(field: &str) -> Result<(), StoreError> {
@@ -300,7 +324,8 @@ fn parse_port(text: &str) -> Result<u16, StoreError> {
 mod tests {
     use super::{
         canonical_resource, parse_canonical_resource, sqlite_i64, CanonicalResource,
-        OwnedCanonicalResource, DDL, PROHIBITED_COLUMN_NAMES, SCHEMA_VERSION,
+        OwnedCanonicalResource, StoreError, DDL, MAX_NETWORK_HOST_BYTES, PROHIBITED_COLUMN_NAMES,
+        SCHEMA_VERSION,
     };
 
     #[test]
@@ -353,6 +378,40 @@ mod tests {
         assert!(canonical_resource(CanonicalResource::Executable("a\0b")).is_err());
         let overlong = "x".repeat(4097);
         assert!(canonical_resource(CanonicalResource::File(&overlong)).is_err());
+    }
+
+    #[test]
+    fn network_host_uses_the_observer_cap_of_255_bytes() {
+        let accepted = "h".repeat(MAX_NETWORK_HOST_BYTES);
+        let encoded = canonical_resource(CanonicalResource::Network {
+            host: &accepted,
+            port: 443,
+        })
+        .expect("255-byte host");
+        assert_eq!(
+            parse_canonical_resource(&encoded).expect("parse 255-byte host"),
+            OwnedCanonicalResource::Network {
+                host: accepted,
+                port: 443,
+            }
+        );
+
+        let rejected = "h".repeat(MAX_NETWORK_HOST_BYTES + 1);
+        assert!(matches!(
+            canonical_resource(CanonicalResource::Network {
+                host: &rejected,
+                port: 443,
+            }),
+            Err(StoreError::NetworkHostTooLong)
+        ));
+        let crafted = format!("network\u{1f}{}:{rejected}\u{1f}3:443", rejected.len());
+        assert!(matches!(
+            parse_canonical_resource(&crafted),
+            Err(StoreError::NetworkHostTooLong)
+        ));
+
+        let file_identity = "p".repeat(4096);
+        assert!(canonical_resource(CanonicalResource::File(&file_identity)).is_ok());
     }
 
     #[test]
