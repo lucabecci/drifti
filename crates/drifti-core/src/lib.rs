@@ -29,10 +29,11 @@
 //! [`drift::DriftResult`]. A capability present only in the current set is
 //! [`drift::DriftKind::Added`]. One present only in the reference set is
 //! [`drift::DriftKind::Removed`]. Action is part of that identity, so a
-//! different action is removal plus addition. Containment is not classified
-//! as expansion or reduction here. A [`drift::DriftFinding`] may carry
-//! severity metadata later. This comparison leaves severity unset and does
-//! not infer intent.
+//! different action is removal plus addition. The same action classifies
+//! typed containment as [`drift::DriftKind::Expanded`] or
+//! [`drift::DriftKind::Reduced`]. Resource text is not compared by prefix.
+//! A [`drift::DriftFinding`] may carry severity metadata later. This
+//! comparison leaves severity unset and does not infer intent.
 //! [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]
