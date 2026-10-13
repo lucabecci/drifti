@@ -86,6 +86,48 @@ fn path_text(path: &Path) -> &str {
     path.to_str().expect("utf-8 path")
 }
 
+fn file_path(event: &ObservedEvent) -> Option<&str> {
+    match event.resource() {
+        ObservedResource::File { path } => Some(path),
+        _ => None,
+    }
+}
+
+/// Parent is canonical. The final component is not followed, so a symlink
+/// stays the link and a missing file keeps its name.
+fn expected_path(path: &Path) -> String {
+    let parent = path.parent().expect("parent");
+    let parent = fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    parent
+        .join(path.file_name().expect("file name"))
+        .to_str()
+        .expect("utf-8 path")
+        .to_string()
+}
+
+fn require<'a>(
+    events: &'a [ObservedEvent],
+    operation: Operation,
+    expected: &str,
+) -> &'a ObservedEvent {
+    let matched: Vec<_> = events
+        .iter()
+        .filter(|event| event.operation() == operation && file_path(event) == Some(expected))
+        .collect();
+    if matched.len() != 1 {
+        let seen: Vec<_> = events
+            .iter()
+            .filter(|event| event.operation() == operation)
+            .filter_map(file_path)
+            .collect();
+        panic!(
+            "expected one {} for {expected}, saw {seen:?}",
+            operation.as_str()
+        );
+    }
+    matched[0]
+}
+
 #[test]
 fn fixture_process_tree_emits_three_exercised_exec_events() {
     let binary = env!("CARGO_BIN_EXE_fixture-process-tree");
@@ -112,22 +154,20 @@ fn fixture_fs_read_and_write_use_canonical_paths() {
     let file = dir.0.join("payload");
     fs::write(&file, b"SECRET").unwrap();
     let (_result, read_events) = observe(read_bin, &["read", path_text(&file)], None, 5202);
-    let read = read_events
-        .iter()
-        .find(|event| event.operation() == Operation::FilesystemRead)
-        .expect("read event");
+    let read = require(
+        &read_events,
+        Operation::FilesystemRead,
+        &expected_path(&file),
+    );
     assert!(read.was_exercised());
-    match read.resource() {
-        ObservedResource::File { path } => assert!(path.ends_with("payload")),
-        other => panic!("read resource {other:?}"),
-    }
 
     let created = dir.0.join("created");
     let (_result, write_events) = observe(write_bin, &["write", path_text(&created)], None, 5203);
-    let write = write_events
-        .iter()
-        .find(|event| event.operation() == Operation::FilesystemWrite)
-        .expect("write event");
+    let write = require(
+        &write_events,
+        Operation::FilesystemWrite,
+        &expected_path(&created),
+    );
     assert!(write.was_exercised());
 }
 
@@ -141,21 +181,16 @@ fn fixture_symlink_follow_and_nofollow_differ() {
     let link = dir.0.join("link");
     std::os::unix::fs::symlink(&target, &link).unwrap();
     let (_result, follow) = observe(binary, &["symlink-follow", path_text(&link)], None, 5204);
-    let follow_event = follow
-        .iter()
-        .find(|event| event.operation() == Operation::FilesystemRead)
-        .expect("follow read");
+    let expected_target = fs::canonicalize(&target).expect("target path");
+    let follow_event = require(
+        &follow,
+        Operation::FilesystemRead,
+        expected_target.to_str().expect("utf-8 path"),
+    );
     assert!(follow_event.was_exercised());
-    match follow_event.resource() {
-        ObservedResource::File { path } => assert!(path.ends_with("target")),
-        other => panic!("follow path {other:?}"),
-    }
 
     let (_result, nofollow) = observe(binary, &["symlink-nofollow", path_text(&link)], None, 5205);
-    let nofollow_event = nofollow
-        .iter()
-        .find(|event| event.operation() == Operation::FilesystemRead)
-        .expect("nofollow read");
+    let nofollow_event = require(&nofollow, Operation::FilesystemRead, &expected_path(&link));
     assert!(nofollow_event.was_attempted());
     assert!(!nofollow_event.was_exercised());
 }
@@ -207,11 +242,13 @@ fn fixture_failed_access_is_attempted_not_exercised() {
     #[cfg(target_arch = "x86_64")]
     {
         let fs_bin = env!("CARGO_BIN_EXE_fixture-fs-read");
-        let (_result, fs_events) = observe(fs_bin, &["fail", "/drifti-kan52-missing"], None, 5208);
-        let open = fs_events
-            .iter()
-            .find(|event| event.operation() == Operation::FilesystemRead)
-            .expect("failed open");
+        let missing = PathBuf::from("/drifti-kan52-missing");
+        let (_result, fs_events) = observe(fs_bin, &["fail", path_text(&missing)], None, 5208);
+        let open = require(
+            &fs_events,
+            Operation::FilesystemRead,
+            &expected_path(&missing),
+        );
         assert!(open.was_attempted());
         assert!(!open.was_exercised());
     }
