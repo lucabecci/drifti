@@ -1,0 +1,21 @@
+[package]
+name = "drifti-cli"
+version = "0.1.0"
+description = "CLI parsing and orchestration for Drifti"
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "drifti"
+path = "src/main.rs"
+
+# Parsing and orchestration only. Domain logic stays in drifti-core (future wiring).
+[dependencies]
+clap = { version = "=4.5.40", features = ["derive", "env"] }
+
+[lints]
+workspace = true

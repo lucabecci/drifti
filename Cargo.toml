@@ -5,6 +5,7 @@ members = [
     "crates/drifti-observer",
     "crates/drifti-observer-linux",
     "crates/drifti-store",
+    "crates/drifti-cli",
 ]
 
 [workspace.package]
