@@ -323,7 +323,7 @@ mod linux {
             unsupported,
             execution.exit_code(),
             None,
-            Some(env!("CARGO_PKG_VERSION").to_owned()),
+            Some(env!("CARGO_PKG_VERSION")),
         )
         .map_err(|error| AppError::Internal {
             message: format!("finish metadata: {error}"),
