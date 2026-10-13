@@ -118,6 +118,148 @@ enum CompileFailure {
     Resource(ResourceError),
 }
 
+/// One contract rule whose authoring text did not resolve to a comparable capability.
+///
+/// Such rules stay visible in drift comparison. They are not dropped silently.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UncomparableContractRule {
+    /// Document field path, such as `filesystem.read.allow[0]`.
+    field_path: String,
+    /// Bounded authoring text shown in the result.
+    authoring: String,
+}
+
+impl UncomparableContractRule {
+    /// Field path of the rule that stayed outside structural comparison.
+    #[must_use]
+    pub fn field_path(&self) -> &str {
+        &self.field_path
+    }
+
+    /// Authoring text that could not become a comparable capability.
+    #[must_use]
+    pub fn authoring(&self) -> &str {
+        &self.authoring
+    }
+}
+
+/// Resolves comparable capabilities for one effect across a version-1 document.
+///
+/// Allow lists and deny lists are resolved separately. A rule that does not
+/// compile into a capability is returned in `uncompared` instead of being
+/// dropped.
+#[must_use]
+pub fn resolve_comparable_capabilities(
+    document: &ContractDocument,
+    effect: RuleEffect,
+) -> (Vec<Capability>, Vec<UncomparableContractRule>) {
+    let mut capabilities = Vec::new();
+    let mut uncompared = Vec::new();
+    let filesystem = document.filesystem();
+    merge_resolved(
+        &mut capabilities,
+        &mut uncompared,
+        resolve_action(
+            FILESYSTEM_KEY,
+            READ_KEY,
+            Action::FilesystemRead,
+            Family::File,
+            effect,
+            filesystem.read(),
+        ),
+    );
+    merge_resolved(
+        &mut capabilities,
+        &mut uncompared,
+        resolve_action(
+            FILESYSTEM_KEY,
+            WRITE_KEY,
+            Action::FilesystemWrite,
+            Family::File,
+            effect,
+            filesystem.write(),
+        ),
+    );
+    merge_resolved(
+        &mut capabilities,
+        &mut uncompared,
+        resolve_action(
+            PROCESS_KEY,
+            EXECUTE_KEY,
+            Action::ProcessExecute,
+            Family::Executable,
+            effect,
+            document.process().execute(),
+        ),
+    );
+    let network = document.network();
+    merge_resolved(
+        &mut capabilities,
+        &mut uncompared,
+        resolve_action(
+            NETWORK_KEY,
+            CONNECT_KEY,
+            Action::NetworkConnect,
+            Family::Network,
+            effect,
+            network.connect(),
+        ),
+    );
+    merge_resolved(
+        &mut capabilities,
+        &mut uncompared,
+        resolve_action(
+            NETWORK_KEY,
+            LISTEN_KEY,
+            Action::NetworkListen,
+            Family::Network,
+            effect,
+            network.listen(),
+        ),
+    );
+    (capabilities, uncompared)
+}
+
+fn merge_resolved(
+    capabilities: &mut Vec<Capability>,
+    uncompared: &mut Vec<UncomparableContractRule>,
+    resolved: (Vec<Capability>, Vec<UncomparableContractRule>),
+) {
+    capabilities.extend(resolved.0);
+    uncompared.extend(resolved.1);
+}
+
+fn resolve_action(
+    domain: &str,
+    action_name: &str,
+    action: Action,
+    family: Family,
+    effect: RuleEffect,
+    listed: &AllowDenyRules,
+) -> (Vec<Capability>, Vec<UncomparableContractRule>) {
+    let resources = match effect {
+        RuleEffect::Allow => listed.allow(),
+        RuleEffect::Deny => listed.deny(),
+    };
+    let effect_key = match effect {
+        RuleEffect::Allow => ALLOW_KEY,
+        RuleEffect::Deny => DENY_KEY,
+    };
+    let mut capabilities = Vec::new();
+    let mut uncompared = Vec::new();
+    for (index, resource) in resources.iter().enumerate() {
+        let field_path = format!("{domain}.{action_name}.{effect_key}[{index}]");
+        match compile_resource(family, action, resource.as_str()) {
+            Ok(capability) => capabilities.push(capability),
+            Err(_) => uncompared.push(UncomparableContractRule {
+                field_path,
+                authoring: show_value(resource.as_str()),
+            }),
+        }
+    }
+    (capabilities, uncompared)
+}
+
 /// Compiles a version-1 document into typed policy rules.
 ///
 /// Rule order follows the document: filesystem read, filesystem write,
