@@ -3,6 +3,7 @@
 
 //! Observe exit semantics (KAN-77).
 
+#[cfg(not(target_os = "linux"))]
 use drifti_cli::{run_with_services, MvpApplicationServices, EXIT_USAGE};
 
 #[test]
