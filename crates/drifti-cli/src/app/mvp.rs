@@ -263,6 +263,7 @@ mod linux {
     };
 
     use super::*;
+    use crate::app::verify::{apply_coverage_guard, evaluate_exercised};
     use crate::result::CommandResult;
 
     pub(super) fn observe_linux(
@@ -333,7 +334,11 @@ mod linux {
         store
             .finish_execution(&store_id, finish)
             .map_err(store_error)?;
-        let status = if coverage == CoverageStatus::Incomplete && child_code == Some(0) {
+        let status = if matches!(
+            coverage,
+            CoverageStatus::Incomplete | CoverageStatus::Unsupported
+        ) && child_code == Some(0)
+        {
             ResultStatus::Incomplete
         } else {
             ResultStatus::Ok
@@ -373,7 +378,10 @@ mod linux {
             &roots,
         );
         let coverage = map_policy_coverage(history.execution().coverage());
-        let summary = evaluate_exercised(&policy, capabilities, coverage);
+        let summary = apply_coverage_guard(
+            evaluate_exercised(&policy, capabilities, coverage),
+            coverage,
+        );
         let evaluations = summary
             .evaluations
             .into_iter()

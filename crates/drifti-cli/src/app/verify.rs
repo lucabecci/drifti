@@ -40,13 +40,24 @@ pub fn evaluate_exercised(
     }
 }
 
+/// When global coverage is not [`Coverage::Complete`], verification must not succeed
+/// unless a deny was already recorded (including zero exercised capabilities).
+#[must_use]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn apply_coverage_guard(mut summary: VerifySummary, coverage: Coverage) -> VerifySummary {
+    if !coverage.is_complete() && !summary.denied {
+        summary.indeterminate = true;
+    }
+    summary
+}
+
 #[cfg(test)]
 mod tests {
     use drifti_core::capability::Capability;
     use drifti_core::policy::{CompiledPolicy, Coverage, Rule, RuleId};
     use drifti_core::resource::{FileResource, FilesystemAnchor};
 
-    use super::evaluate_exercised;
+    use super::{apply_coverage_guard, evaluate_exercised};
 
     fn read(path: &str) -> Capability {
         Capability::filesystem_read(FileResource::new(FilesystemAnchor::Repo, path).expect("file"))
@@ -80,6 +91,26 @@ mod tests {
     #[test]
     fn incomplete_coverage_yields_indeterminate_not_denied() {
         let summary = evaluate_exercised(&allow_all(), [read("src/lib.rs")], Coverage::Incomplete);
+        assert!(!summary.denied);
+        assert!(summary.indeterminate);
+    }
+
+    #[test]
+    fn empty_exercised_with_incomplete_coverage_is_indeterminate() {
+        let summary = apply_coverage_guard(
+            evaluate_exercised(&allow_all(), [], Coverage::Incomplete),
+            Coverage::Incomplete,
+        );
+        assert!(!summary.denied);
+        assert!(summary.indeterminate);
+    }
+
+    #[test]
+    fn empty_exercised_with_unsupported_coverage_is_indeterminate() {
+        let summary = apply_coverage_guard(
+            evaluate_exercised(&allow_all(), [], Coverage::Unsupported),
+            Coverage::Unsupported,
+        );
         assert!(!summary.denied);
         assert!(summary.indeterminate);
     }

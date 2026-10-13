@@ -3,6 +3,7 @@
 
 //! SPEC-009 CLI acceptance tests (KAN-81).
 
+use std::fs;
 use std::sync::{Mutex, MutexGuard};
 
 use drifti_cli::app::{ApplicationServices, CommandContext, MvpApplicationServices};
@@ -120,6 +121,26 @@ fn exit_mapper_covers_spec_codes() {
         map_command_outcome(CommandExitInput::success().with_process(300)),
         255
     );
+}
+
+#[test]
+fn verify_invalid_contract_exits_123() {
+    let (dir, _guard) = isolated_workdir();
+    std::env::set_current_dir(dir.path()).expect("chdir");
+    assert_eq!(
+        run_with_services(&MvpApplicationServices, ["drifti", "init"]),
+        i32::from(EXIT_SUCCESS)
+    );
+    fs::write(
+        dir.path().join("drifti.yaml"),
+        "version: not-a-valid-contract\n",
+    )
+    .expect("write contract");
+    let code = run_with_services(
+        &MvpApplicationServices,
+        ["drifti", "verify", "--", "/bin/true"],
+    );
+    assert_eq!(code, i32::from(EXIT_INVALID_CONTRACT));
 }
 
 #[test]
