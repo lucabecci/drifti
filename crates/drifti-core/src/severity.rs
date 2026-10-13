@@ -50,8 +50,13 @@ pub fn classify(finding: &DriftFinding) -> Severity {
         return Severity::Low;
     };
     let mut band = capability_band(capability);
-    if finding.kind() == DriftKind::Expanded && band == Severity::Low {
-        band = Severity::Medium;
+    if finding.kind() == DriftKind::Expanded {
+        if let Some(reference) = finding.reference() {
+            band = std::cmp::max(band, capability_band(reference));
+        }
+        if band == Severity::Low {
+            band = Severity::Medium;
+        }
     }
     band
 }
@@ -375,6 +380,13 @@ mod tests {
         let wide = read(FilesystemAnchor::Repo, "./**");
         assert_severity(expanded(narrow.clone(), wide.clone()), Severity::Medium);
         assert_severity(reduced(wide, narrow), Severity::Low);
+    }
+
+    #[test]
+    fn expanded_from_critical_reference_keeps_at_least_reference_band() {
+        let key = read(FilesystemAnchor::Home, ".ssh/id_rsa");
+        let home_glob = read(FilesystemAnchor::Home, "**");
+        assert_severity(expanded(key, home_glob), Severity::Critical);
     }
 
     #[test]
