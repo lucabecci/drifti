@@ -27,8 +27,8 @@
 //! calls that lookup.
 
 use drifti_observer::{
-    EvidenceMeta, FailureReason, MonotonicTimestamp, ObservedEvent, ObservedResource, Operation,
-    Outcome, ParentIdentity, ProcessIdentity,
+    EvidenceMeta, FailureReason, MonotonicTimestamp, NetworkProtocol, ObservedEvent,
+    ObservedResource, Operation, Outcome, ParentIdentity, ProcessIdentity,
 };
 use rusqlite::{params, Connection, Row};
 
@@ -341,9 +341,25 @@ fn decode_resource(kind: &str, canonical: &str) -> Result<ObservedResource, Stor
         ("executable", OwnedCanonicalResource::Executable(identity)) => {
             ObservedResource::executable(identity).map_err(|_| StoreError::CorruptEvent)
         }
-        ("network", OwnedCanonicalResource::Network { host, port }) => {
-            ObservedResource::network(host, port).map_err(|_| StoreError::CorruptEvent)
-        }
+        (
+            "network",
+            OwnedCanonicalResource::Network {
+                host,
+                port,
+                protocol,
+            },
+        ) => match protocol.as_deref() {
+            None => ObservedResource::network(host, port).map_err(|_| StoreError::CorruptEvent),
+            Some("tcp") => {
+                ObservedResource::network_with_protocol(NetworkProtocol::Tcp, host, port)
+                    .map_err(|_| StoreError::CorruptEvent)
+            }
+            Some("udp") => {
+                ObservedResource::network_with_protocol(NetworkProtocol::Udp, host, port)
+                    .map_err(|_| StoreError::CorruptEvent)
+            }
+            Some(_) => Err(StoreError::CorruptEvent),
+        },
         _ => Err(StoreError::CorruptEvent),
     }
 }

@@ -22,6 +22,7 @@ use crate::lineage::ThreadLineage;
 use crate::network::{NetworkDecodeError, NetworkDecoder};
 use crate::process::ProcessDecoder;
 use crate::session::{SessionLimits, TraceSession};
+use crate::unsupported::mark_io_uring_domains;
 
 /// Linux ptrace observer.
 ///
@@ -68,15 +69,21 @@ impl Observer for LinuxObserver {
             emitter: EventEmitter::new(&sink, self.execution_id),
             filesystem_unsupported: !cfg!(target_arch = "x86_64"),
             network_unsupported: !cfg!(target_arch = "x86_64"),
+            io_uring_detected: false,
         };
         let result = TraceSession::launch(self.execution_id, command)
             .and_then(|session| session.drive(&mut decoder));
         let filesystem_unsupported = decoder.filesystem_unsupported;
         let network_unsupported = decoder.network_unsupported;
+        let io_uring_detected = decoder.io_uring_detected;
         let mapped = match result {
             Ok(report) => Ok(ExecutionResult::new(
                 report.execution_id(),
-                execution_coverage(filesystem_unsupported, network_unsupported),
+                execution_coverage(
+                    filesystem_unsupported,
+                    network_unsupported,
+                    io_uring_detected,
+                ),
                 report.exit_code(),
             )),
             Err(error) => Err(map_error(error)),
@@ -88,6 +95,7 @@ impl Observer for LinuxObserver {
 fn execution_coverage(
     filesystem_unsupported: bool,
     network_unsupported: bool,
+    io_uring_detected: bool,
 ) -> ExecutionCoverage {
     let mut unsupported = Vec::new();
     if filesystem_unsupported {
@@ -95,6 +103,9 @@ fn execution_coverage(
     }
     if network_unsupported {
         unsupported.push(CapabilityDomain::Network);
+    }
+    if io_uring_detected {
+        mark_io_uring_domains(&mut unsupported);
     }
     if unsupported.is_empty() {
         ExecutionCoverage::no_events_seen()
@@ -111,11 +122,15 @@ struct ExecutionVisitor<'a> {
     emitter: EventEmitter<'a>,
     filesystem_unsupported: bool,
     network_unsupported: bool,
+    io_uring_detected: bool,
 }
 
 impl TraceVisitor for ExecutionVisitor<'_> {
     fn on_stop(&mut self, stop: &TraceStop, lineage: &ThreadLineage) -> Result<(), TraceError> {
         if let TraceStop::Gap(gap) = stop {
+            if matches!(gap, ObservationGap::UnsupportedIoUring { .. }) {
+                self.io_uring_detected = true;
+            }
             let tid = gap_tid(*gap);
             if self.filesystem.has_pending(tid) {
                 return Err(TraceError::FilesystemDecode);
@@ -183,7 +198,8 @@ impl TraceVisitor for ExecutionVisitor<'_> {
 
 fn gap_tid(gap: ObservationGap) -> u32 {
     match gap {
-        ObservationGap::SyscallPhaseMismatch { tid, .. }
+        ObservationGap::UnsupportedIoUring { tid, .. }
+        | ObservationGap::SyscallPhaseMismatch { tid, .. }
         | ObservationGap::UnaffiliatedTracee { tid }
         | ObservationGap::ParentConflict { tid, .. }
         | ObservationGap::InvalidEventMessage { tid }
@@ -219,7 +235,7 @@ mod tests {
 
     #[test]
     fn unsupported_filesystem_abi_degrades_coverage() {
-        let coverage = execution_coverage(true, false);
+        let coverage = execution_coverage(true, false, false);
         assert_eq!(coverage.status(), ObservationCoverage::Incomplete);
         assert!(coverage
             .unsupported_domains()
@@ -232,7 +248,7 @@ mod tests {
 
     #[test]
     fn unsupported_network_abi_degrades_coverage() {
-        let coverage = execution_coverage(false, true);
+        let coverage = execution_coverage(false, true, false);
         assert_eq!(coverage.status(), ObservationCoverage::Incomplete);
         assert!(coverage
             .unsupported_domains()
@@ -245,9 +261,22 @@ mod tests {
 
     #[test]
     fn supported_domains_stay_incomplete() {
-        let coverage = execution_coverage(false, false);
+        let coverage = execution_coverage(false, false, false);
         assert_eq!(coverage.status(), ObservationCoverage::Incomplete);
         assert!(coverage.unsupported_domains().is_empty());
+        assert!(!coverage.is_complete());
+    }
+
+    #[test]
+    fn io_uring_gap_degrades_filesystem_and_network_domains() {
+        let coverage = execution_coverage(false, false, true);
+        assert_eq!(coverage.status(), ObservationCoverage::Incomplete);
+        assert!(coverage
+            .unsupported_domains()
+            .contains(&CapabilityDomain::Filesystem));
+        assert!(coverage
+            .unsupported_domains()
+            .contains(&CapabilityDomain::Network));
         assert!(!coverage.is_complete());
     }
 

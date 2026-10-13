@@ -23,6 +23,7 @@
 
 mod abi;
 mod cleanup;
+mod doctor;
 #[cfg(target_os = "linux")]
 mod emitter;
 mod error;
@@ -39,6 +40,7 @@ mod process;
 mod report;
 mod syscall;
 mod syscall_info;
+mod unsupported;
 mod wait_status;
 
 #[cfg(target_os = "linux")]
@@ -48,6 +50,7 @@ mod session;
 #[cfg(target_os = "linux")]
 mod backend;
 
+pub use doctor::{DoctorCheck, DoctorFinding, DoctorReport, DoctorStatus};
 pub use error::{ObservationGap, TraceError, TraceStop};
 pub use lifecycle::{
     apply_stop, AcknowledgeStops, AppliedStop, PtraceEventKind, RawStop, ResumeAction, TraceVisitor,

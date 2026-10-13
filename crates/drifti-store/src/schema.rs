@@ -186,12 +186,14 @@ pub enum CanonicalResource<'a> {
     File(&'a str),
     /// Executable name or path text.
     Executable(&'a str),
-    /// Host or address text and a port.
+    /// Host or address text, a port, and the transport when the observer established it.
     Network {
         /// Host or address text.
         host: &'a str,
         /// Port.
         port: u16,
+        /// `tcp` or `udp` when known. Absence keeps the two-field encoding.
+        protocol: Option<&'a str>,
     },
 }
 
@@ -202,12 +204,14 @@ pub enum OwnedCanonicalResource {
     File(String),
     /// Executable name or path text.
     Executable(String),
-    /// Host or address text and a port.
+    /// Host or address text, a port, and the transport when the observer established it.
     Network {
         /// Host or address text.
         host: String,
         /// Port.
         port: u16,
+        /// `tcp` or `udp` when known.
+        protocol: Option<String>,
     },
 }
 
@@ -220,10 +224,21 @@ pub fn canonical_resource(resource: CanonicalResource<'_>) -> Result<String, Sto
     match resource {
         CanonicalResource::File(path) => encode("file", &[path]),
         CanonicalResource::Executable(identity) => encode("executable", &[identity]),
-        CanonicalResource::Network { host, port } => {
+        CanonicalResource::Network {
+            host,
+            port,
+            protocol,
+        } => {
             validate_network_host(host)?;
             let port = port.to_string();
-            encode("network", &[host, port.as_str()])
+            if let Some(protocol) = protocol {
+                if protocol != "tcp" && protocol != "udp" {
+                    return Err(StoreError::InvalidCanonicalResource);
+                }
+                encode("network", &[host, port.as_str(), protocol])
+            } else {
+                encode("network", &[host, port.as_str()])
+            }
         }
     }
 }
@@ -242,6 +257,18 @@ pub fn parse_canonical_resource(text: &str) -> Result<OwnedCanonicalResource, St
             Ok(OwnedCanonicalResource::Network {
                 host: host.clone(),
                 port: parse_port(port)?,
+                protocol: None,
+            })
+        }
+        ("network", [host, port, protocol]) => {
+            validate_network_host(host)?;
+            if protocol != "tcp" && protocol != "udp" {
+                return Err(StoreError::InvalidCanonicalResource);
+            }
+            Ok(OwnedCanonicalResource::Network {
+                host: host.clone(),
+                port: parse_port(port)?,
+                protocol: Some((*protocol).to_owned()),
             })
         }
         _ => Err(StoreError::InvalidCanonicalResource),
@@ -373,6 +400,7 @@ mod tests {
         let encoded = canonical_resource(CanonicalResource::Network {
             host: "::1",
             port: 443,
+            protocol: None,
         })
         .expect("encode network");
         assert_eq!(
@@ -380,6 +408,39 @@ mod tests {
             OwnedCanonicalResource::Network {
                 host: "::1".to_owned(),
                 port: 443,
+                protocol: None,
+            }
+        );
+    }
+
+    #[test]
+    fn canonical_network_keeps_a_known_protocol_and_accepts_the_older_form() {
+        let encoded = canonical_resource(CanonicalResource::Network {
+            host: "127.0.0.1",
+            port: 9,
+            protocol: Some("tcp"),
+        })
+        .expect("encode protocol");
+        assert_eq!(
+            parse_canonical_resource(&encoded).expect("parse protocol"),
+            OwnedCanonicalResource::Network {
+                host: "127.0.0.1".to_owned(),
+                port: 9,
+                protocol: Some("tcp".to_owned()),
+            }
+        );
+        assert!(canonical_resource(CanonicalResource::Network {
+            host: "127.0.0.1",
+            port: 9,
+            protocol: Some("icmp"),
+        })
+        .is_err());
+        assert_eq!(
+            parse_canonical_resource("network\u{1f}9:127.0.0.1\u{1f}1:9").expect("older form"),
+            OwnedCanonicalResource::Network {
+                host: "127.0.0.1".to_owned(),
+                port: 9,
+                protocol: None,
             }
         );
     }
@@ -398,6 +459,7 @@ mod tests {
         let encoded = canonical_resource(CanonicalResource::Network {
             host: &accepted,
             port: 443,
+            protocol: None,
         })
         .expect("255-byte host");
         assert_eq!(
@@ -405,6 +467,7 @@ mod tests {
             OwnedCanonicalResource::Network {
                 host: accepted,
                 port: 443,
+                protocol: None,
             }
         );
 
@@ -413,6 +476,7 @@ mod tests {
             canonical_resource(CanonicalResource::Network {
                 host: &rejected,
                 port: 443,
+                protocol: None,
             }),
             Err(StoreError::NetworkHostTooLong)
         ));

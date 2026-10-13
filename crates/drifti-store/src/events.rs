@@ -28,7 +28,8 @@ use std::fmt::{self, Display, Formatter};
 use std::num::NonZeroUsize;
 
 use drifti_observer::{
-    CursorError, EventCursor, EventSink, EvidenceMeta, ObservedEvent, ObservedResource, Outcome,
+    CursorError, EventCursor, EventSink, EvidenceMeta, NetworkProtocol, ObservedEvent,
+    ObservedResource, Outcome,
 };
 use rusqlite::{params, OptionalExtension, Transaction};
 
@@ -361,16 +362,28 @@ pub(crate) fn encode_resource(
             "executable",
             canonical_resource(CanonicalResource::Executable(identity))?,
         )),
-        ObservedResource::Network { host, port } => {
+        ObservedResource::Network {
+            protocol,
+            host,
+            port,
+        } => {
             // SPEC-004 limits the host to 255 bytes. The shared encoder used
             // to accept 256..=4096 for every field. The write path applies
             // the observer cap before that encoder runs.
             if host.len() > MAX_NETWORK_HOST_BYTES {
                 return Err(StoreError::NetworkHostTooLong);
             }
+            let protocol = protocol.map(|protocol| match protocol {
+                NetworkProtocol::Tcp => "tcp",
+                NetworkProtocol::Udp => "udp",
+            });
             Ok((
                 "network",
-                canonical_resource(CanonicalResource::Network { host, port: *port })?,
+                canonical_resource(CanonicalResource::Network {
+                    host,
+                    port: *port,
+                    protocol,
+                })?,
             ))
         }
     }
