@@ -11,8 +11,10 @@
 //! input order. Successfully exercised capabilities collapse by identity into
 //! the baseline before a later aggregation. A failed attempt stays in
 //! [`LearningInput::failed_evidence`] and does not enter that baseline.
-//! Duplicate successes become one baseline capability. This module does not
-//! count runs, record first or last seen, or assign a presentation class.
+//! Duplicate successes become one baseline capability.
+//! [`LearningInput::aggregate`] then counts runs and observations and records
+//! the caller-supplied first and last seen keys. Those counts are not a
+//! policy decision and do not assign a presentation class.
 //!
 //! No field is [`Decision::Allowed`](crate::policy::Decision::Allowed).
 //! Learning does not grant authority and does not read or write an accepted
@@ -26,6 +28,7 @@ use crate::capability::Capability;
 use crate::diff::{CapabilityKey, NormalizedCapabilitySet};
 use crate::observation::Outcome;
 use crate::profile::{CapabilityProfile, ProfileEntry};
+use crate::resource::{FilesystemAnchor, NetworkAddress, NetworkProtocol, Resource};
 
 /// Presence of one collapsed capability.
 ///
@@ -68,15 +71,26 @@ impl EligibleExecutionId {
 pub struct CapabilityAttempt {
     capability: Capability,
     outcome: Outcome,
+    seen: u64,
 }
 
 impl CapabilityAttempt {
     /// Records one attempt of an already normalized capability.
     #[must_use]
     pub const fn new(capability: Capability, outcome: Outcome) -> Self {
+        Self::at(capability, outcome, 0)
+    }
+
+    /// Records one attempt at a caller-supplied monotonic key.
+    ///
+    /// `seen` is not a clock reading. Aggregation uses it only to order
+    /// successful observations.
+    #[must_use]
+    pub const fn at(capability: Capability, outcome: Outcome, seen: u64) -> Self {
         Self {
             capability,
             outcome,
+            seen,
         }
     }
 
@@ -96,6 +110,12 @@ impl CapabilityAttempt {
     #[must_use]
     pub const fn was_exercised(&self) -> bool {
         matches!(self.outcome, Outcome::Success)
+    }
+
+    /// Caller-supplied monotonic key for this attempt.
+    #[must_use]
+    pub const fn seen(&self) -> u64 {
+        self.seen
     }
 }
 
@@ -158,11 +178,20 @@ impl FailedEvidence {
     }
 }
 
+/// One successful observation of a capability inside a single execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct ObservationTally {
+    count: u64,
+    first_seen: u64,
+    last_seen: u64,
+}
+
 /// Capabilities collapsed inside one selected execution.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct ExecutionContribution {
     exercised: BTreeSet<CapabilityKey>,
     failed: BTreeSet<CapabilityKey>,
+    observations: BTreeMap<CapabilityKey, ObservationTally>,
 }
 
 /// Ordered learning input for one selected execution set.
@@ -194,11 +223,24 @@ impl LearningInput {
                 let CapabilityAttempt {
                     capability,
                     outcome,
+                    seen,
                 } = attempt;
                 let key = CapabilityKey::new(capability);
                 match outcome {
                     Outcome::Success => {
-                        contribution.exercised.insert(key);
+                        contribution.exercised.insert(key.clone());
+                        let tally =
+                            contribution
+                                .observations
+                                .entry(key)
+                                .or_insert(ObservationTally {
+                                    count: 0,
+                                    first_seen: seen,
+                                    last_seen: seen,
+                                });
+                        tally.count = tally.count.saturating_add(1);
+                        tally.first_seen = tally.first_seen.min(seen);
+                        tally.last_seen = tally.last_seen.max(seen);
                     }
                     Outcome::Failure => {
                         contribution.failed.insert(key);
@@ -295,6 +337,149 @@ impl LearningInput {
                     capability: key.capability().clone(),
                 })
             })
+    }
+
+    /// Counts exercised observations across the selected executions.
+    ///
+    /// `runs_observed` is the number of executions in which the capability
+    /// succeeded at least once. `observation_count` counts every successful
+    /// attempt, including duplicates inside one execution. A failure increments
+    /// neither. `first_seen` and `last_seen` are the minimum and maximum
+    /// caller-supplied keys of those successes. The counts are not
+    /// [`Decision::Allowed`](crate::policy::Decision::Allowed).
+    #[must_use]
+    pub fn aggregate(&self) -> AggregatedProfile {
+        let mut entries: BTreeMap<CapabilityKey, ProfileStatistics> = BTreeMap::new();
+        for contribution in self.executions.values() {
+            for (key, tally) in &contribution.observations {
+                let stats = entries.entry(key.clone()).or_insert(ProfileStatistics {
+                    runs_observed: 0,
+                    observation_count: 0,
+                    first_seen: tally.first_seen,
+                    last_seen: tally.last_seen,
+                });
+                stats.runs_observed = stats.runs_observed.saturating_add(1);
+                stats.observation_count = stats.observation_count.saturating_add(tally.count);
+                stats.first_seen = stats.first_seen.min(tally.first_seen);
+                stats.last_seen = stats.last_seen.max(tally.last_seen);
+            }
+        }
+        AggregatedProfile {
+            total_eligible_runs: self.executions.len() as u64,
+            entries,
+        }
+    }
+}
+
+/// Counts for one capability identity.
+///
+/// These fields sit beside identity. They are not an authorization decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProfileStatistics {
+    runs_observed: u64,
+    observation_count: u64,
+    first_seen: u64,
+    last_seen: u64,
+}
+
+impl ProfileStatistics {
+    /// Executions in which this capability was exercised at least once.
+    #[must_use]
+    pub const fn runs_observed(self) -> u64 {
+        self.runs_observed
+    }
+
+    /// Successful attempts, including more than one inside a single execution.
+    #[must_use]
+    pub const fn observation_count(self) -> u64 {
+        self.observation_count
+    }
+
+    /// Smallest caller-supplied key among successful attempts.
+    #[must_use]
+    pub const fn first_seen(self) -> u64 {
+        self.first_seen
+    }
+
+    /// Largest caller-supplied key among successful attempts.
+    #[must_use]
+    pub const fn last_seen(self) -> u64 {
+        self.last_seen
+    }
+}
+
+/// Deterministic profile counts for one learning selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AggregatedProfile {
+    total_eligible_runs: u64,
+    entries: BTreeMap<CapabilityKey, ProfileStatistics>,
+}
+
+impl AggregatedProfile {
+    /// Distinct selected executions, not the number of attempts.
+    #[must_use]
+    pub const fn total_eligible_runs(&self) -> u64 {
+        self.total_eligible_runs
+    }
+
+    /// Statistics for one capability, when it was exercised.
+    #[must_use]
+    pub fn statistics(&self, capability: &Capability) -> Option<ProfileStatistics> {
+        self.entries
+            .get(&CapabilityKey::new(capability.clone()))
+            .copied()
+    }
+
+    /// Exercised capabilities in identity order.
+    pub fn capabilities(&self) -> impl Iterator<Item = &Capability> {
+        self.entries.keys().map(CapabilityKey::capability)
+    }
+
+    /// Stable text for this profile. Identical histories produce the same bytes.
+    #[must_use]
+    pub fn canonical_text(&self) -> String {
+        let mut text = format!("total_eligible_runs {}\n", self.total_eligible_runs);
+        for (key, stats) in &self.entries {
+            let capability = key.capability();
+            text.push_str(&format!(
+                "{} {} {} {} {} {}\n",
+                capability.action().as_str(),
+                resource_identity(capability.resource()),
+                stats.runs_observed,
+                stats.observation_count,
+                stats.first_seen,
+                stats.last_seen,
+            ));
+        }
+        text
+    }
+}
+
+fn resource_identity(resource: &Resource) -> String {
+    match resource {
+        Resource::File(file) => {
+            let anchor = match file.anchor() {
+                FilesystemAnchor::Repo => "repo",
+                FilesystemAnchor::Home => "home",
+                FilesystemAnchor::Temp => "temp",
+                FilesystemAnchor::Absolute => "abs",
+            };
+            format!("file {anchor} {}", file.file_path())
+        }
+        Resource::Executable(executable) => format!("executable {}", executable.identity()),
+        Resource::Network(network) => {
+            let protocol = match network.protocol() {
+                NetworkProtocol::Tcp => "tcp",
+                NetworkProtocol::Udp => "udp",
+            };
+            let address = match network.address() {
+                NetworkAddress::Ip(address) => address.to_string(),
+                NetworkAddress::Cidr(cidr) => {
+                    format!("{}/{}", cidr.address(), cidr.prefix_length())
+                }
+            };
+            format!("network {protocol} {address} {}", network.port())
+        }
     }
 }
 
@@ -624,6 +809,104 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_counts_successes_and_ignores_failures() {
+        let repeated = read("src/a.rs");
+        let once = read("src/b.rs");
+        let failed = Capability::filesystem_write(
+            FileResource::new(FilesystemAnchor::Repo, "src/a.rs").expect("file"),
+        );
+        let forward = LearningInput::select([
+            execution(
+                "run-b",
+                [
+                    CapabilityAttempt::at(repeated.clone(), Outcome::Success, 10),
+                    CapabilityAttempt::at(repeated.clone(), Outcome::Success, 4),
+                    CapabilityAttempt::at(failed.clone(), Outcome::Failure, 99),
+                ],
+            ),
+            execution(
+                "run-a",
+                [
+                    CapabilityAttempt::at(repeated.clone(), Outcome::Success, 7),
+                    CapabilityAttempt::at(repeated.clone(), Outcome::Failure, 8),
+                    CapabilityAttempt::at(once.clone(), Outcome::Success, 1),
+                ],
+            ),
+            execution(
+                "run-c",
+                [CapabilityAttempt::at(failed.clone(), Outcome::Failure, 2)],
+            ),
+        ]);
+        let reverse = LearningInput::select([
+            execution(
+                "run-c",
+                [CapabilityAttempt::at(failed.clone(), Outcome::Failure, 2)],
+            ),
+            execution(
+                "run-a",
+                [
+                    CapabilityAttempt::at(once.clone(), Outcome::Success, 1),
+                    CapabilityAttempt::at(repeated.clone(), Outcome::Failure, 8),
+                    CapabilityAttempt::at(repeated.clone(), Outcome::Success, 7),
+                ],
+            ),
+            execution(
+                "run-b",
+                [
+                    CapabilityAttempt::at(failed.clone(), Outcome::Failure, 99),
+                    CapabilityAttempt::at(repeated.clone(), Outcome::Success, 4),
+                    CapabilityAttempt::at(repeated.clone(), Outcome::Success, 10),
+                ],
+            ),
+        ]);
+
+        let profile = forward.aggregate();
+        assert_eq!(
+            profile.canonical_text(),
+            reverse.aggregate().canonical_text()
+        );
+        assert_eq!(profile.total_eligible_runs(), 3);
+        assert_eq!(
+            profile.canonical_text(),
+            "\
+total_eligible_runs 3
+filesystem.read file repo src/a.rs 2 3 4 10
+filesystem.read file repo src/b.rs 1 1 1 1
+"
+        );
+        assert_eq!(
+            profile.capabilities().cloned().collect::<Vec<_>>(),
+            vec![repeated.clone(), once.clone()]
+        );
+
+        let repeated_stats = profile.statistics(&repeated).expect("repeated");
+        assert_eq!(repeated_stats.runs_observed(), 2);
+        assert_eq!(repeated_stats.observation_count(), 3);
+        assert_eq!(repeated_stats.first_seen(), 4);
+        assert_eq!(repeated_stats.last_seen(), 10);
+
+        let once_stats = profile.statistics(&once).expect("once");
+        assert_eq!(once_stats.runs_observed(), 1);
+        assert_eq!(once_stats.observation_count(), 1);
+        assert_eq!(once_stats.first_seen(), 1);
+        assert_eq!(once_stats.last_seen(), 1);
+        assert!(profile.statistics(&failed).is_none());
+        assert!(forward
+            .failed_evidence()
+            .any(|item| item.capability() == &repeated && item.execution().as_str() == "run-a"));
+
+        assert_eq!(forward.baseline_profile().frequency_of(&repeated), Some(1));
+        let rendered = format!("{profile:?}{}", profile.canonical_text());
+        for decision in Decision::ALL {
+            assert!(
+                !rendered.contains(decision.as_str()),
+                "{}",
+                decision.as_str()
+            );
+        }
+    }
+
+    #[test]
     fn permuting_the_input_keeps_failures_out_of_the_baseline() {
         let mut runner = deterministic_runner();
         let strategy = (
@@ -671,6 +954,14 @@ mod tests {
                         item.execution() == execution && item.capability() == key.capability()
                     });
                     prop_assert!(found);
+                }
+
+                prop_assert_eq!(
+                    selected.aggregate().canonical_text(),
+                    reordered.aggregate().canonical_text()
+                );
+                for key in &failure_only {
+                    prop_assert!(selected.aggregate().statistics(key.capability()).is_none());
                 }
 
                 let profile = selected.baseline_profile();
