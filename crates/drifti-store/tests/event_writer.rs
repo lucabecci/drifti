@@ -423,7 +423,11 @@ fn network_host_of_255_bytes_round_trips_without_a_payload() {
     );
     assert_eq!(
         parse_canonical_resource(&stored[0].canonical_resource).expect("parse"),
-        OwnedCanonicalResource::Network { host, port: 443 }
+        OwnedCanonicalResource::Network {
+            host,
+            port: 443,
+            protocol: None,
+        }
     );
     let bytes = fs::read(store.path()).expect("read database");
     assert!(!contains_bytes(&bytes, SECRET_PAYLOAD.as_bytes()));
