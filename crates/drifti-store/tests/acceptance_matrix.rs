@@ -91,6 +91,46 @@ fn assert_no_sensitive(bytes: &[u8]) {
     }
 }
 
+fn assert_no_secret_columns(path: &Path) {
+    let connection = open_sql(path);
+    let mut tables = connection
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        .expect("tables");
+    let names: Vec<String> = tables
+        .query_map([], |row| row.get(0))
+        .expect("table names")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("table rows");
+    drop(tables);
+    const PROHIBITED: &[&str] = &[
+        "argv",
+        "secret",
+        "prompt",
+        "model_response",
+        "payload",
+        "file_bytes",
+        "content",
+    ];
+    for table in names {
+        let mut info = connection
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .expect("table info");
+        let columns: Vec<String> = info
+            .query_map([], |row| row.get(1))
+            .expect("columns")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("column rows");
+        for column in columns {
+            assert!(
+                !PROHIBITED
+                    .iter()
+                    .any(|name| column.eq_ignore_ascii_case(name)),
+                "{table}.{column} would persist a prohibited value"
+            );
+        }
+    }
+}
+
 fn open_sql(path: &Path) -> Connection {
     let connection = Connection::open(path).expect("open database");
     connection
@@ -288,7 +328,14 @@ fn matrix_ordered_event_batch_rolls_back_and_blocks_complete_coverage() {
         StoreError::DuplicateEventSequence
     ));
     assert!(!error.allows_complete_coverage());
-    assert_eq!(sequences.len(), 3);
+    let sequences_after: Vec<i64> = open_sql(store.path())
+        .prepare("SELECT sequence FROM events WHERE execution_id = ?1 ORDER BY sequence")
+        .expect("prepare after rollback")
+        .query_map(params![id.as_str()], |row| row.get(0))
+        .expect("query after rollback")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("rows after rollback");
+    assert_eq!(sequences_after, sequences);
 
     let complete = FinishExecution::try_new(CoverageStatus::Complete, [], Some(0), None, None)
         .expect("complete finish");
@@ -341,13 +388,6 @@ fn matrix_migration_and_reopen_preserve_execution_history() {
 fn matrix_state_db_omits_sensitive_argv_payloads_secrets_prompts_and_file_bytes() {
     let workspace = TempWorkspace::new("privacy");
     let mut store = Store::open(workspace.path()).expect("open");
-    let _argv = ARGV_SENTINEL;
-    let _secret = SECRET_SENTINEL;
-    let _prompt = PROMPT_SENTINEL;
-    let _response = RESPONSE_SENTINEL;
-    let _file_bytes = FILE_BYTES_SENTINEL;
-    let _payload = PAYLOAD_SENTINEL;
-
     let command = CommandMetadata::try_new("matrix-tool", 6).expect("command");
     let id = store
         .create_execution(Some(command))
@@ -387,6 +427,7 @@ fn matrix_state_db_omits_sensitive_argv_payloads_secrets_prompts_and_file_bytes(
     drop(store);
     let bytes = fs::read(&path).expect("state.db bytes");
     assert_no_sensitive(&bytes);
+    assert_no_secret_columns(&path);
 
     let connection = Connection::open(&path).expect("inspect");
     let (program, arg_count): (String, i64) = connection
