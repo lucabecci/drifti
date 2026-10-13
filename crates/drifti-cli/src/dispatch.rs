@@ -9,8 +9,7 @@ use std::path::PathBuf;
 use crate::app::{AppError, ApplicationServices, CliError, CommandContext};
 use crate::cli::{Commands, DriftiCli};
 use crate::exit::{
-    map_command_outcome, CommandExitClass, CommandExitInput, EXIT_INTERNAL, EXIT_INVALID_CONTRACT,
-    EXIT_USAGE,
+    map_command_outcome, CommandExitInput, EXIT_INTERNAL, EXIT_INVALID_CONTRACT, EXIT_USAGE,
 };
 use crate::output::OutputConfig;
 use crate::render::render_result;

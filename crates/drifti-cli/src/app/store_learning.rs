@@ -17,8 +17,6 @@ use drifti_observer::{
 };
 use drifti_store::{ExecutionRecord, Store};
 
-use drifti_store::ReadRepository as _;
-
 use super::AppError;
 
 pub fn learning_input_from_store(

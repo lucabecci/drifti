@@ -252,19 +252,18 @@ mod linux {
     };
     use drifti_core::policy::CompiledPolicy;
     use drifti_observer::{
-        CommandSpec, CursorError, EventSink, ExecutionId as ObserverExecutionId,
+        CommandSpec, CursorError, ExecutionId as ObserverExecutionId,
         ObservedResource as ObserverResource, Observer, Operation as ObserverOperation,
-        Outcome as ObserverOutcome,
     };
     use drifti_observer_linux::LinuxObserver;
     use drifti_store::{
         bounded_event_channel, CommandMetadata, CoverageStatus, EventBatchWriter, ExecutionId,
-        Store,
+        FinishExecution, Store,
     };
 
     use super::*;
     use crate::app::verify::{apply_coverage_guard, evaluate_exercised};
-    use crate::result::CommandResult;
+    use crate::result::{CommandResult, ObserveResult, VerifyEvaluationView, VerifyResult};
 
     pub(super) fn observe_linux(
         ctx: &CommandContext,
@@ -318,9 +317,7 @@ mod linux {
             message: format!("observation failed: {error}"),
         })?;
         let (coverage, unsupported) = map_coverage(execution.coverage());
-        let child_code = execution
-            .exit_code()
-            .and_then(|code| u8::try_from(code).ok());
+        let child_code = execution.exit_code().and_then(child_exit_to_u8);
         let finish = FinishExecution::try_new(
             coverage,
             unsupported,
@@ -439,8 +436,18 @@ mod linux {
         ))
     }
 
+    fn child_exit_to_u8(code: i32) -> Option<u8> {
+        u8::try_from(code).ok().or_else(|| {
+            if code > i32::from(u8::MAX) {
+                Some(u8::MAX)
+            } else {
+                None
+            }
+        })
+    }
+
     fn map_coverage(
-        coverage: drifti_observer::ExecutionCoverage,
+        coverage: &drifti_observer::ExecutionCoverage,
     ) -> (
         CoverageStatus,
         std::collections::BTreeSet<drifti_store::CapabilityDomain>,
