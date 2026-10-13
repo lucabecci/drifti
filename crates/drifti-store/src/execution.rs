@@ -46,6 +46,14 @@ pub trait ExecutionRepository {
     /// Reads one execution. The id must already be canonical.
     fn get_execution(&self, id: &ExecutionId) -> Result<ExecutionRecord, StoreError>;
 
+    /// Every execution, ordered by [`ExecutionId`].
+    ///
+    /// The id is time-sortable, so this is the history order. An empty store
+    /// is an empty list. That is not a missing execution. Coverage on each
+    /// record is the stored declaration. Absence means the execution is still
+    /// started, and absence is not `COMPLETE`.
+    fn list_executions(&self) -> Result<Vec<ExecutionRecord>, StoreError>;
+
     /// Marks a started execution finished.
     ///
     /// A second finish fails and leaves the first record in place. `COMPLETE`
@@ -79,6 +87,15 @@ impl ExecutionId {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Bits encoded by the 32 hex characters.
+    ///
+    /// SPEC-004 events carry this value. The event writer rejects an event
+    /// whose id does not match the execution row.
+    #[must_use]
+    pub fn to_raw(&self) -> u128 {
+        u128::from_str_radix(&self.0, 16).expect("canonical execution id is hex")
     }
 
     /// Unix millisecond prefix. This is not a PID.
@@ -423,6 +440,16 @@ impl Store {
         load_execution(&self.connection, &self.path, id)
     }
 
+    /// Every execution, ordered by id.
+    pub fn list_executions(&self) -> Result<Vec<ExecutionRecord>, StoreError> {
+        let ids = execution_ids(&self.connection, &self.path)?;
+        let mut records = Vec::with_capacity(ids.len());
+        for id in ids {
+            records.push(load_execution(&self.connection, &self.path, &id)?);
+        }
+        Ok(records)
+    }
+
     /// Marks a started execution finished.
     pub fn finish_execution(
         &mut self,
@@ -502,7 +529,16 @@ impl Store {
                     id: id.as_str().to_owned(),
                 })
             }
-            Some("started") => {}
+            Some("started") => {
+                // A failed batch stays unpersisted. COMPLETE stays refused
+                // after this process exits until a later batch commits.
+                if finish.coverage.is_complete()
+                    && (self.event_write_failures.contains(id)
+                        || event_failure_marked(&transaction, &path, id)?)
+                {
+                    return Err(StoreError::StorageFailureBlocksComplete);
+                }
+            }
             Some(_) => return Err(StoreError::CorruptExecution),
         }
         let changed = transaction
@@ -556,6 +592,10 @@ impl ExecutionRepository for Store {
         Store::get_execution(self, id)
     }
 
+    fn list_executions(&self) -> Result<Vec<ExecutionRecord>, StoreError> {
+        Store::list_executions(self)
+    }
+
     fn finish_execution(
         &mut self,
         id: &ExecutionId,
@@ -573,6 +613,25 @@ struct RawExecution {
     arg_count: Option<i64>,
     contract_version: Option<String>,
     tool_version: Option<String>,
+}
+
+fn execution_ids(
+    connection: &Connection,
+    path: &std::path::Path,
+) -> Result<Vec<ExecutionId>, StoreError> {
+    let mut statement = connection
+        .prepare("SELECT execution_id FROM executions ORDER BY execution_id")
+        .map_err(|source| map_sqlite(path, source))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|source| map_sqlite(path, source))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        let text = row.map_err(|source| map_sqlite(path, source))?;
+        let id = ExecutionId::parse(&text).map_err(|_| StoreError::CorruptExecution)?;
+        ids.push(id);
+    }
+    Ok(ids)
 }
 
 fn load_execution(
@@ -695,6 +754,22 @@ fn random_tail(connection: &Connection) -> Result<u128, rusqlite::Error> {
         tail = (tail << 8) | u128::from(byte);
     }
     Ok(tail)
+}
+
+fn event_failure_marked(
+    connection: &Connection,
+    path: &std::path::Path,
+    id: &ExecutionId,
+) -> Result<bool, StoreError> {
+    let marked: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM execution_event_failures WHERE execution_id = ?1",
+            params![id.as_str()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|source| map_sqlite(path, source))?;
+    Ok(marked.is_some())
 }
 
 fn optional_version(value: Option<&str>) -> Result<Option<String>, StoreError> {

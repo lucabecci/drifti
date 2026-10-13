@@ -24,10 +24,32 @@
 //! document enters through [`contract::AcceptedContract::loaded`]. Only an
 //! [`contract::AcceptedContract`] compiles into policy rules. None of these
 //! paths renders a terminal.
+//! [`adapters`] project run, profile, and contract states into comparable
+//! capabilities and call [`diff::diff`]. [`observation`] names the exercised
+//! event vocabulary the run adapter maps into capabilities.
+//! [`profile::CapabilityProfile`] carries frequency metadata beside identity.
+//! [`learning`] selects one ordered learning input from eligible executions.
+//! Input order does not change that input. Only successfully exercised
+//! capabilities enter the baseline, after duplicate identities collapse.
+//! A failed attempt stays inspectable evidence and is not learned authority.
+//! The baseline is capability identity with a presence marker. No learning
+//! field is [`policy::Decision::Allowed`]. Learning does not query a store
+//! and does not accept a contract.
+//! [`diff::diff`] normalizes a reference set and a current set, then groups
+//! each side by capability identity. The same canonical set yields an empty
+//! [`drift::DriftResult`]. A capability present only in the current set is
+//! [`drift::DriftKind::Added`]. One present only in the reference set is
+//! [`drift::DriftKind::Removed`]. Action is part of that identity, so a
+//! different action is removal plus addition. The same action classifies
+//! typed containment as [`drift::DriftKind::Expanded`] or
+//! [`drift::DriftKind::Reduced`]. Resource text is not compared by prefix.
+//! A [`drift::DriftFinding`] may carry severity metadata later. This
+//! comparison leaves severity unset and does not infer intent.
 //! [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]
 
+pub mod adapters;
 pub mod capability;
 pub mod contract;
 pub mod diff;
@@ -35,6 +57,7 @@ pub mod drift;
 pub mod foundation;
 pub mod generalization;
 pub mod learning;
+pub mod observation;
 pub mod policy;
 pub mod profile;
 pub mod resource;

@@ -6,9 +6,25 @@
 use std::cmp::Ordering;
 
 use drifti_observer::{
-    EventError, EvidenceMeta, ExecutionId, FailureReason, MonotonicTimestamp, ObservedEvent,
-    ObservedResource, Operation, Outcome, ParentIdentity, ProcessIdentity,
+    EventError, EvidenceMeta, ExecutionId, FailureReason, MonotonicTimestamp, NetworkProtocol,
+    ObservedEvent, ObservedResource, Operation, Outcome, ParentIdentity, ProcessIdentity,
 };
+
+#[test]
+fn network_resource_keeps_authoritative_protocol_and_address() {
+    let endpoint = ObservedResource::network_with_protocol(NetworkProtocol::Tcp, "127.0.0.1", 8080)
+        .expect("endpoint");
+    let json = serde_json::to_value(&endpoint).expect("serialize");
+    assert_eq!(json["protocol"], "tcp");
+    assert_eq!(json["host"], "127.0.0.1");
+    assert_eq!(json["port"], 8080);
+    assert_eq!(
+        serde_json::from_value::<ObservedResource>(json).unwrap(),
+        endpoint
+    );
+    let old = ObservedResource::network("example.test", 443).unwrap();
+    assert!(serde_json::to_value(old).unwrap().get("protocol").is_none());
+}
 
 /// Looks like an argument or secret. It is never stored on the event.
 const SECRET_LOOKING_ARGUMENT: &str = "aws-secret-access-key=not-part-of-the-event";

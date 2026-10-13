@@ -3,8 +3,8 @@
 
 //! Failures while opening or describing the execution store.
 //!
-//! An incompatible database is left on disk. This type has no variant that
-//! deletes history.
+//! An incompatible database is left on disk. A failed migration is rolled
+//! back. This type has no variant that deletes history.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -58,10 +58,31 @@ pub enum StoreError {
         /// Version this process knows how to open.
         expected: i64,
     },
+    /// A forward migration failed and was rolled back.
+    ///
+    /// `version` is the schema version still stored. The database file is
+    /// not deleted.
+    MigrationFailed {
+        /// Database path.
+        path: PathBuf,
+        /// Version still stored after the rollback.
+        version: i64,
+        /// Statement that failed.
+        source: rusqlite::Error,
+    },
+    /// The crate's migration plan is not a contiguous forward sequence.
+    ///
+    /// The database file is not modified.
+    InvalidMigrationPlan {
+        /// Database path.
+        path: PathBuf,
+    },
     /// A canonical resource field was empty.
     EmptyIdentity,
     /// A canonical resource field exceeded 4096 bytes.
     IdentityTooLong,
+    /// A network host exceeded the SPEC-004 cap of 255 bytes.
+    NetworkHostTooLong,
     /// A canonical resource field contained a NUL byte.
     EmbeddedNul,
     /// Text was not a canonical resource produced by this crate.
@@ -96,6 +117,10 @@ pub enum StoreError {
     ExecutionIdExhausted,
     /// A stored execution row broke an invariant this repository can read.
     CorruptExecution,
+    /// A stored event row broke an invariant this repository can read.
+    ///
+    /// The read fails. It does not skip the row.
+    CorruptEvent,
     /// No process row uses this pid inside the execution.
     ProcessNotFound {
         /// Canonical execution id.
@@ -121,6 +146,18 @@ pub enum StoreError {
     InvalidProcessParent,
     /// A stored process row broke an invariant this repository can read.
     CorruptProcess,
+    /// Two events in one batch used the same sequence.
+    DuplicateEventSequence,
+    /// An event sequence was not after the last committed sequence.
+    SequenceRegression,
+    /// An event names a different execution than the batch target.
+    EventExecutionMismatch,
+    /// The batch was larger than the writer's bound. No row was written.
+    EventBatchTooLarge,
+    /// The cursor did not deliver an event and the batch was not committed.
+    EventCursorFailed,
+    /// This process saw a failed event batch, so `COMPLETE` is refused.
+    StorageFailureBlocksComplete,
 }
 
 impl Display for StoreError {
@@ -157,9 +194,26 @@ impl Display for StoreError {
                     path.display()
                 ),
             },
+            Self::MigrationFailed {
+                path,
+                version,
+                source,
+            } => write!(
+                formatter,
+                "{} migration failed at schema version {version} and was rolled back: {source}",
+                path.display()
+            ),
+            Self::InvalidMigrationPlan { path } => write!(
+                formatter,
+                "{} migration plan is not a contiguous forward sequence",
+                path.display()
+            ),
             Self::EmptyIdentity => formatter.write_str("canonical resource field is empty"),
             Self::IdentityTooLong => {
                 formatter.write_str("canonical resource field exceeds 4096 bytes")
+            }
+            Self::NetworkHostTooLong => {
+                formatter.write_str("network host exceeds 255 bytes")
             }
             Self::EmbeddedNul => {
                 formatter.write_str("canonical resource field contains a NUL byte")
@@ -192,6 +246,7 @@ impl Display for StoreError {
             Self::ClockOutOfRange => formatter.write_str("clock is outside the execution id range"),
             Self::ExecutionIdExhausted => formatter.write_str("execution id space is exhausted"),
             Self::CorruptExecution => formatter.write_str("execution row cannot be read honestly"),
+            Self::CorruptEvent => formatter.write_str("event row cannot be read honestly"),
             Self::ProcessNotFound { execution_id, pid } => {
                 write!(formatter, "process {pid} is unknown in execution {execution_id}")
             }
@@ -207,6 +262,24 @@ impl Display for StoreError {
                 formatter.write_str("a process cannot be its own parent")
             }
             Self::CorruptProcess => formatter.write_str("process row cannot be read honestly"),
+            Self::DuplicateEventSequence => {
+                formatter.write_str("event batch repeats a sequence")
+            }
+            Self::SequenceRegression => {
+                formatter.write_str("event sequence is not after the last committed sequence")
+            }
+            Self::EventExecutionMismatch => {
+                formatter.write_str("event execution id does not match the batch")
+            }
+            Self::EventBatchTooLarge => {
+                formatter.write_str("event batch exceeds the bounded batch size")
+            }
+            Self::EventCursorFailed => {
+                formatter.write_str("event cursor failed before the batch was committed")
+            }
+            Self::StorageFailureBlocksComplete => {
+                formatter.write_str("storage failure blocks COMPLETE coverage")
+            }
         }
     }
 }
@@ -215,9 +288,12 @@ impl Error for StoreError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::CreateStateDir { source, .. } | Self::ReadMetadata { source, .. } => Some(source),
-            Self::NotADatabase { source, .. } | Self::Sqlite { source, .. } => Some(source),
+            Self::NotADatabase { source, .. }
+            | Self::Sqlite { source, .. }
+            | Self::MigrationFailed { source, .. } => Some(source),
             Self::DatabasePathIsDirectory { .. }
             | Self::IncompatibleSchema { .. }
+            | Self::InvalidMigrationPlan { .. }
             | Self::EmptyIdentity
             | Self::IdentityTooLong
             | Self::EmbeddedNul
@@ -233,11 +309,19 @@ impl Error for StoreError {
             | Self::ClockOutOfRange
             | Self::ExecutionIdExhausted
             | Self::CorruptExecution
+            | Self::CorruptEvent
             | Self::ProcessNotFound { .. }
             | Self::ProcessConflict { .. }
             | Self::ProcessCycle { .. }
             | Self::InvalidProcessParent
-            | Self::CorruptProcess => None,
+            | Self::CorruptProcess
+            | Self::NetworkHostTooLong
+            | Self::DuplicateEventSequence
+            | Self::SequenceRegression
+            | Self::EventExecutionMismatch
+            | Self::EventBatchTooLarge
+            | Self::EventCursorFailed
+            | Self::StorageFailureBlocksComplete => None,
         }
     }
 }

@@ -3,6 +3,8 @@
 
 //! Known syscall paths whose effects this observer cannot fully decode.
 
+use drifti_observer::CapabilityDomain;
+
 #[cfg(target_os = "linux")]
 use crate::error::{ObservationGap, TraceStop};
 #[cfg(target_os = "linux")]
@@ -35,6 +37,41 @@ pub(crate) fn io_uring_gap(stop: &TraceStop, already_recorded: bool) -> Option<O
         tid: syscall.tid(),
         syscall: number,
     })
+}
+
+/// Domains whose syscall decoders io_uring can bypass once it is used.
+pub(crate) fn io_uring_unsupported_domains() -> &'static [CapabilityDomain] {
+    &[CapabilityDomain::Filesystem, CapabilityDomain::Network]
+}
+
+/// Records io_uring-related domains in `unsupported` without duplicates.
+pub(crate) fn mark_io_uring_domains(unsupported: &mut Vec<CapabilityDomain>) {
+    for domain in io_uring_unsupported_domains() {
+        if !unsupported.contains(domain) {
+            unsupported.push(*domain);
+        }
+    }
+}
+
+#[cfg(test)]
+mod domain_tests {
+    use drifti_observer::CapabilityDomain;
+
+    use super::{io_uring_unsupported_domains, mark_io_uring_domains};
+
+    #[test]
+    fn io_uring_marks_filesystem_and_network_without_duplicates() {
+        assert_eq!(
+            io_uring_unsupported_domains(),
+            &[CapabilityDomain::Filesystem, CapabilityDomain::Network]
+        );
+        let mut domains = vec![CapabilityDomain::Filesystem];
+        mark_io_uring_domains(&mut domains);
+        assert_eq!(
+            domains,
+            vec![CapabilityDomain::Filesystem, CapabilityDomain::Network]
+        );
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
