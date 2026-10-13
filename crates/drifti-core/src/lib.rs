@@ -32,8 +32,10 @@
 //! Input order does not change that input. Only successfully exercised
 //! capabilities enter the baseline, after duplicate identities collapse.
 //! A failed attempt stays inspectable evidence and is not learned authority.
-//! The baseline is capability identity with a presence marker. No learning
-//! field is [`policy::Decision::Allowed`]. Learning does not query a store
+//! The baseline is capability identity with a presence marker.
+//! [`learning::LearningInput::aggregate`] counts runs and successful
+//! observations beside that identity. No learning field is
+//! [`policy::Decision::Allowed`]. Learning does not query a store
 //! and does not accept a contract.
 //! [`diff::diff`] normalizes a reference set and a current set, then groups
 //! each side by capability identity. The same canonical set yields an empty
