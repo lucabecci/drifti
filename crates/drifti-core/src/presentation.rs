@@ -141,7 +141,6 @@ impl PresentedProfile {
 
 impl AggregatedProfile {
     /// Assigns presentation classes using caller thresholds.
-    #[must_use]
     pub fn present(
         &self,
         thresholds: PresentationThresholds,
