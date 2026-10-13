@@ -3,14 +3,11 @@
 
 //! Observe exit semantics (KAN-77).
 
-use drifti_cli::{run_with_services, EXIT_USAGE, MvpApplicationServices};
+use drifti_cli::{run_with_services, MvpApplicationServices, EXIT_USAGE};
 
 #[test]
 #[cfg(not(target_os = "linux"))]
 fn observe_requires_linux_before_running_a_child() {
-    let code = run_with_services(
-        &MvpApplicationServices,
-        ["drifti", "observe", "--", "true"],
-    );
+    let code = run_with_services(&MvpApplicationServices, ["drifti", "observe", "--", "true"]);
     assert_eq!(code, i32::from(EXIT_USAGE));
 }
