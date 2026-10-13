@@ -4,7 +4,7 @@
 //! Controlled tracee for lifecycle tests.
 //!
 //! Modes: `exit <code>`, `tree`, `exec-tree`, `exec-child`, `failed-exec`,
-//! `syscall`, `threads`, `sleep`.
+//! `io-uring`, `syscall`, `threads`, `sleep`.
 
 #![deny(unsafe_code)]
 
@@ -41,6 +41,7 @@ mod linux {
             Some("exec-tree") => exec_tree(),
             Some("exec-child") => exec_child(),
             Some("failed-exec") => failed_exec(),
+            Some("io-uring") => io_uring(),
             Some("syscall") => syscall(),
             Some("threads") => threads(),
             Some("sleep") => thread::sleep(Duration::from_secs(60)),
@@ -110,6 +111,19 @@ mod linux {
             .status()
             .unwrap()
             .success());
+    }
+
+    fn io_uring() {
+        // SAFETY: `io_uring_setup` with a null params pointer fails on every
+        // kernel that exposes the syscall. The observer still records the
+        // unsupported path before the tracee resumes.
+        let _ = unsafe {
+            libc::syscall(
+                libc::SYS_io_uring_setup,
+                8u32,
+                std::ptr::null::<libc::c_void>(),
+            )
+        };
     }
 
     fn failed_exec() {
