@@ -28,6 +28,13 @@
 //! capabilities and call [`diff::diff`]. [`observation`] names the exercised
 //! event vocabulary the run adapter maps into capabilities.
 //! [`profile::CapabilityProfile`] carries frequency metadata beside identity.
+//! [`learning`] selects one ordered learning input from eligible executions.
+//! Input order does not change that input. Only successfully exercised
+//! capabilities enter the baseline, after duplicate identities collapse.
+//! A failed attempt stays inspectable evidence and is not learned authority.
+//! The baseline is capability identity with a presence marker. No learning
+//! field is [`policy::Decision::Allowed`]. Learning does not query a store
+//! and does not accept a contract.
 //! [`diff::diff`] normalizes a reference set and a current set, then groups
 //! each side by capability identity. The same canonical set yields an empty
 //! [`drift::DriftResult`]. A capability present only in the current set is
