@@ -38,3 +38,32 @@ path = "fixtures/filesystem_tracee.rs"
 [[bin]]
 name = "network-tracee"
 path = "fixtures/network_tracee.rs"
+
+# SPEC-005 acceptance aliases. Each binary is deterministic and local-only.
+[[bin]]
+name = "fixture-process-tree"
+path = "fixtures/lifecycle_tracee.rs"
+
+[[bin]]
+name = "fixture-failed-access"
+path = "fixtures/lifecycle_tracee.rs"
+
+[[bin]]
+name = "fixture-io-uring"
+path = "fixtures/lifecycle_tracee.rs"
+
+[[bin]]
+name = "fixture-fs-read"
+path = "fixtures/filesystem_tracee.rs"
+
+[[bin]]
+name = "fixture-fs-write"
+path = "fixtures/filesystem_tracee.rs"
+
+[[bin]]
+name = "fixture-symlink"
+path = "fixtures/filesystem_tracee.rs"
+
+[[bin]]
+name = "fixture-network-connect"
+path = "fixtures/network_tracee.rs"
