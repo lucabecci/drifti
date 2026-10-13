@@ -34,7 +34,9 @@
 //! A failed attempt stays inspectable evidence and is not learned authority.
 //! The baseline is capability identity with a presence marker.
 //! [`learning::LearningInput::aggregate`] counts runs and successful
-//! observations beside that identity. No learning field is
+//! observations beside that identity.
+//! [`presentation`] assigns STABLE, COMMON, RARE, and NEW labels from those
+//! counts. No learning field is
 //! [`policy::Decision::Allowed`]. Learning does not query a store
 //! and does not accept a contract.
 //! [`diff::diff`] normalizes a reference set and a current set, then groups
@@ -61,5 +63,6 @@ pub mod generalization;
 pub mod learning;
 pub mod observation;
 pub mod policy;
+pub mod presentation;
 pub mod profile;
 pub mod resource;
