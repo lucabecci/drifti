@@ -130,6 +130,16 @@ pub enum Operation {
     NetworkListen,
 }
 
+/// Transport protocol known from authoritative socket state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkProtocol {
+    /// TCP stream socket.
+    Tcp,
+    /// UDP datagram socket.
+    Udp,
+}
+
 impl Operation {
     /// Every operation this crate can name.
     pub const ALL: [Self; 6] = [
@@ -171,6 +181,9 @@ pub enum ObservedResource {
     },
     /// Network endpoint identity.
     Network {
+        /// Transport protocol, when the observer can establish it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        protocol: Option<NetworkProtocol>,
         /// Host or address text. Not a payload.
         host: String,
         /// Port.
@@ -196,7 +209,21 @@ impl ObservedResource {
     /// Network endpoint. The host is at most 255 bytes. The port is stored as given.
     pub fn network(host: impl Into<String>, port: u16) -> Result<Self, EventError> {
         Ok(Self::Network {
+            protocol: None,
             host: map_text(text::bounded(host, MAX_HOST))?,
+            port,
+        })
+    }
+
+    /// Network endpoint with a transport protocol established by the observer.
+    pub fn network_with_protocol(
+        protocol: NetworkProtocol,
+        address: impl Into<String>,
+        port: u16,
+    ) -> Result<Self, EventError> {
+        Ok(Self::Network {
+            protocol: Some(protocol),
+            host: map_text(text::bounded(address, MAX_HOST))?,
             port,
         })
     }

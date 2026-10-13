@@ -34,3 +34,7 @@ path = "fixtures/lifecycle_tracer.rs"
 [[bin]]
 name = "filesystem-tracee"
 path = "fixtures/filesystem_tracee.rs"
+
+[[bin]]
+name = "network-tracee"
+path = "fixtures/network_tracee.rs"
