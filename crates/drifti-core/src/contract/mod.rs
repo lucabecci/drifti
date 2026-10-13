@@ -24,7 +24,9 @@ mod parse;
 mod serialize;
 
 pub use acceptance::{AcceptedContract, ContractProposal, ContractWriteRequest};
-pub use compile::ContractCompileError;
+pub use compile::{
+    resolve_comparable_capabilities, ContractCompileError, UncomparableContractRule,
+};
 pub use parse::{parse_contract, ContractParseError, SourceLocation};
 pub use serialize::serialize_contract;
 

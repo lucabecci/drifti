@@ -24,6 +24,10 @@
 //! document enters through [`contract::AcceptedContract::loaded`]. Only an
 //! [`contract::AcceptedContract`] compiles into policy rules. None of these
 //! paths renders a terminal.
+//! [`adapters`] project run, profile, and contract states into comparable
+//! capabilities and call [`diff::diff`]. [`observation`] names the exercised
+//! event vocabulary the run adapter maps into capabilities.
+//! [`profile::CapabilityProfile`] carries frequency metadata beside identity.
 //! [`diff::diff`] normalizes a reference set and a current set, then groups
 //! each side by capability identity. The same canonical set yields an empty
 //! [`drift::DriftResult`]. A capability present only in the current set is
@@ -38,6 +42,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod adapters;
 pub mod capability;
 pub mod contract;
 pub mod diff;
@@ -45,6 +50,7 @@ pub mod drift;
 pub mod foundation;
 pub mod generalization;
 pub mod learning;
+pub mod observation;
 pub mod policy;
 pub mod profile;
 pub mod resource;
