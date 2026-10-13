@@ -117,7 +117,13 @@ mod linux {
         // SAFETY: `io_uring_setup` with a null params pointer fails on every
         // kernel that exposes the syscall. The observer still records the
         // unsupported path before the tracee resumes.
-        let _ = unsafe { libc::syscall(libc::SYS_io_uring_setup, 8u32, std::ptr::null()) };
+        let _ = unsafe {
+            libc::syscall(
+                libc::SYS_io_uring_setup,
+                8u32,
+                std::ptr::null::<libc::c_void>(),
+            )
+        };
     }
 
     fn failed_exec() {
