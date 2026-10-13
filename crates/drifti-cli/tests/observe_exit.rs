@@ -3,7 +3,7 @@
 
 //! Observe exit semantics (KAN-77).
 
-use drifti_cli::{DefaultApplicationServices, EXIT_USER, run_with_services};
+use drifti_cli::{run_with_services, DefaultApplicationServices, EXIT_USER};
 
 #[test]
 #[cfg(not(target_os = "linux"))]

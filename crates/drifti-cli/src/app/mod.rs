@@ -3,9 +3,13 @@
 
 mod default;
 mod error;
+mod generate;
+mod intelligence;
 mod observe;
 mod service;
+mod store_learning;
 mod stub;
+mod workspace;
 
 pub use default::DefaultApplicationServices;
 pub use error::{AppError, CliError};
