@@ -6,6 +6,7 @@
 //! KAN-75 wires the command tree and dispatches to [`app::ApplicationServices`].
 //! KAN-77 wires `observe` through store and Linux observation when available.
 //! KAN-78 wires `learn`, `generate`, and `diff` through core learning and drift.
+//! KAN-79 wires `verify` to observation, policy evaluation, and exit mapping.
 
 #![forbid(unsafe_code)]
 

@@ -3,12 +3,14 @@
 
 mod default;
 mod error;
+mod events;
 mod generate;
 mod intelligence;
 mod observe;
 mod service;
 mod store_learning;
 mod stub;
+mod verify;
 mod workspace;
 
 pub use default::DefaultApplicationServices;

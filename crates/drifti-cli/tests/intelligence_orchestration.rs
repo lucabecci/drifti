@@ -11,7 +11,11 @@ use drifti_observer::{
     ParentIdentity, ProcessIdentity,
 };
 use drifti_store::{CommandMetadata, CoverageStatus, EventBatchWriter, FinishExecution, Store};
+use std::sync::Mutex;
+
 use tempfile::TempDir;
+
+static WORKSPACE: Mutex<()> = Mutex::new(());
 
 fn seed_finished_read(store: &mut Store, path: &str) {
     let metadata = CommandMetadata::try_new("echo", 0).expect("metadata");
@@ -45,6 +49,7 @@ fn seed_finished_read(store: &mut Store, path: &str) {
 
 #[test]
 fn learn_without_store_fails_actionably() {
+    let _guard = WORKSPACE.lock().expect("workspace");
     let dir = TempDir::new().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
     let code = run_with_services(&DefaultApplicationServices, ["drifti", "learn"]);
@@ -53,6 +58,7 @@ fn learn_without_store_fails_actionably() {
 
 #[test]
 fn learn_json_artifact_is_not_contract() {
+    let _guard = WORKSPACE.lock().expect("workspace");
     let dir = TempDir::new().expect("tempdir");
     let mut store = Store::open(dir.path()).expect("store");
     seed_finished_read(&mut store, "src/main.rs");
@@ -66,6 +72,7 @@ fn learn_json_artifact_is_not_contract() {
 
 #[test]
 fn generate_write_does_not_use_stub() {
+    let _guard = WORKSPACE.lock().expect("workspace");
     let dir = TempDir::new().expect("tempdir");
     let mut store = Store::open(dir.path()).expect("store");
     seed_finished_read(&mut store, "src/lib.rs");

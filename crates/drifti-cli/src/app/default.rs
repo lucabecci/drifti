@@ -5,6 +5,7 @@
 
 use super::intelligence;
 use super::observe;
+use super::verify;
 use super::{AppError, ApplicationServices, CommandContext, ObserveExit, VerifyExit};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -27,8 +28,8 @@ impl ApplicationServices for DefaultApplicationServices {
         intelligence::generate(ctx, write)
     }
 
-    fn verify(&self, _ctx: &CommandContext, _command: &[String]) -> Result<VerifyExit, AppError> {
-        Err(AppError::NotImplemented { command: "verify" })
+    fn verify(&self, ctx: &CommandContext, command: &[String]) -> Result<VerifyExit, AppError> {
+        verify::verify(ctx, command)
     }
 
     fn diff(&self, ctx: &CommandContext) -> Result<(), AppError> {

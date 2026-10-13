@@ -14,19 +14,29 @@ use drifti_observer::{
 use drifti_observer_linux::LinuxObserver;
 use drifti_store::{
     bounded_event_channel, CapabilityDomain, CommandMetadata, CoverageStatus, EventBatchWriter,
-    ExecutionRepository, FinishExecution, Store,
+    ExecutionId, ExecutionRepository, FinishExecution, Store,
 };
 
 use super::exit_code::{process_exit_for_observe, ObserveRun};
 use crate::app::workspace::store_error;
 use crate::app::{AppError, CommandContext, ObserveExit};
 
+/// Finished observation run plus store execution id (for verify).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObserveExecution {
+    pub run: ObserveRun,
+    pub execution_id: ExecutionId,
+}
+
 pub fn observe_on_linux(ctx: &CommandContext, command: &[String]) -> Result<ObserveExit, AppError> {
-    let run = run_linux(ctx, command)?;
+    let ObserveExecution { run, .. } = run_observe_execution(ctx, command)?;
     Ok(process_exit_for_observe(run))
 }
 
-fn run_linux(ctx: &CommandContext, command: &[String]) -> Result<ObserveRun, AppError> {
+pub fn run_observe_execution(
+    ctx: &CommandContext,
+    command: &[String],
+) -> Result<ObserveExecution, AppError> {
     let program = command.first().ok_or_else(|| AppError::User {
         message: "observe requires a command after `--`".into(),
     })?;
@@ -90,9 +100,12 @@ fn run_linux(ctx: &CommandContext, command: &[String]) -> Result<ObserveRun, App
         .finish_execution(&store_id, finish)
         .map_err(store_error)?;
 
-    Ok(ObserveRun {
-        child_exit: execution_result.exit_code(),
-        coverage_complete,
+    Ok(ObserveExecution {
+        run: ObserveRun {
+            child_exit: execution_result.exit_code(),
+            coverage_complete,
+        },
+        execution_id: store_id,
     })
 }
 
