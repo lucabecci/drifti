@@ -3,8 +3,8 @@
 
 //! CLI parsing and application-service boundary for Drifti.
 //!
-//! KAN-75 wires the command tree and dispatches to [`app::ApplicationServices`].
-//! KAN-77 wires `observe` through store and Linux observation when available.
+//! KAN-75 wires the command tree; SPEC-009 routes MVP commands through
+//! [`app::MvpApplicationServices`] (observe, verify, learn, generate, diff, init, doctor).
 
 #![forbid(unsafe_code)]
 
@@ -13,13 +13,17 @@ pub mod cli;
 pub mod dispatch;
 pub mod exit;
 pub mod output;
+pub mod render;
+pub mod result;
 
 use std::env;
 use std::path::PathBuf;
 
-pub use app::{DefaultApplicationServices, StubApplicationServices};
+pub use app::{MvpApplicationServices, StubApplicationServices};
 pub use cli::DriftiCli;
-pub use exit::{EXIT_COMMAND, EXIT_INTERNAL, EXIT_NOT_READY, EXIT_SUCCESS, EXIT_USER};
+pub use exit::{
+    EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_INVALID_CONTRACT, EXIT_SUCCESS, EXIT_USAGE, EXIT_VIOLATION,
+};
 
 use app::ApplicationServices;
 use dispatch::dispatch;
@@ -27,7 +31,7 @@ use dispatch::dispatch;
 const CLAP_USAGE_EXIT: i32 = 2;
 
 pub fn run_from_env() -> i32 {
-    run_with_services(&DefaultApplicationServices, env::args())
+    run_with_services(&MvpApplicationServices, env::args())
 }
 
 pub fn run_with_services<S: ApplicationServices>(
