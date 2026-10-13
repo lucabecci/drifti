@@ -236,6 +236,14 @@ pub enum TraceError {
     },
     /// The visitor rejected the stop.
     Visitor,
+    /// A recognized filesystem syscall could not be represented.
+    ///
+    /// Display text is a reason code. It has no pathname and no file bytes.
+    FilesystemDecode,
+    /// A recognized network syscall could not be represented.
+    ///
+    /// Display text is a reason code. It has no address and no payload.
+    NetworkDecode,
     /// The sink rejected a semantic event.
     Sink(SinkError),
     /// The lifecycle ended while a tracee was still live.
@@ -281,6 +289,8 @@ impl TraceError {
             | Self::InvalidTid
             | Self::StopLimit { .. }
             | Self::Visitor
+            | Self::FilesystemDecode
+            | Self::NetworkDecode
             | Self::LiveTraceesRemain
             | Self::TraceeNotReaped { .. } => ObserverError::ObservationFailed {
                 reason: ObservationFailureReason::TraceInterrupted,
@@ -317,6 +327,10 @@ impl Display for TraceError {
             Self::InvalidTid => formatter.write_str("invalid tracee tid"),
             Self::StopLimit { .. } => formatter.write_str("trace stop limit exceeded"),
             Self::Visitor => formatter.write_str("trace visitor rejected a stop"),
+            Self::FilesystemDecode => {
+                formatter.write_str("filesystem syscall could not be decoded")
+            }
+            Self::NetworkDecode => formatter.write_str("network syscall could not be decoded"),
             Self::Sink(error) => write!(formatter, "{error}"),
             Self::LiveTraceesRemain => formatter.write_str("trace ended with live tracees"),
             Self::TraceeNotReaped { tid, errno, prior } => {

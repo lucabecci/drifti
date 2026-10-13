@@ -3,7 +3,8 @@
 
 //! Controlled tracee for lifecycle tests.
 //!
-//! Modes: `exit <code>`, `tree`, `syscall`, `threads`, `sleep`.
+//! Modes: `exit <code>`, `tree`, `exec-tree`, `exec-child`, `failed-exec`,
+//! `syscall`, `threads`, `sleep`.
 
 #![deny(unsafe_code)]
 
@@ -22,7 +23,7 @@ fn main() {
 mod linux {
     use std::env;
     use std::io::Error;
-    use std::process::exit;
+    use std::process::{exit, Command};
     use std::thread;
     use std::time::Duration;
 
@@ -37,6 +38,9 @@ mod linux {
                 exit(code);
             }
             Some("tree") => tree(),
+            Some("exec-tree") => exec_tree(),
+            Some("exec-child") => exec_child(),
+            Some("failed-exec") => failed_exec(),
             Some("syscall") => syscall(),
             Some("threads") => threads(),
             Some("sleep") => thread::sleep(Duration::from_secs(60)),
@@ -88,6 +92,34 @@ mod linux {
             unsafe { libc::_exit(0) };
         }
         reap(child);
+    }
+
+    fn exec_tree() {
+        let binary = env::current_exe().expect("fixture executable path");
+        assert!(Command::new(binary)
+            .arg("exec-child")
+            .status()
+            .unwrap()
+            .success());
+    }
+
+    fn exec_child() {
+        let binary = env::current_exe().expect("fixture executable path");
+        assert!(Command::new(binary)
+            .args(["exit", "0"])
+            .status()
+            .unwrap()
+            .success());
+    }
+
+    fn failed_exec() {
+        let path = c"/drifti-fixture/no-such-executable";
+        let argv = [path.as_ptr(), std::ptr::null()];
+        // SAFETY: `path` and `argv` are terminated and live across the call.
+        // This missing path must return ENOENT; it must not replace the image.
+        let rc = unsafe { libc::execve(path.as_ptr(), argv.as_ptr(), std::ptr::null()) };
+        assert_eq!(rc, -1);
+        assert_eq!(Error::last_os_error().raw_os_error(), Some(libc::ENOENT));
     }
 
     fn reap(pid: libc::pid_t) {

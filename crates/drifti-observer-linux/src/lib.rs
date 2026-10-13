@@ -9,10 +9,11 @@
 //! syscall entry/exit state, and sets `PTRACE_O_EXITKILL` so a tracer that
 //! dies does not leave tracees running where the kernel supports that option.
 //!
-//! Semantic decoders consume [`TraceStop`] values from [`TraceVisitor`] while the
-//! tracee is stopped. [`TraceReport::bootstrap_coverage`] is `INCOMPLETE`,
-//! never `COMPLETE`. Remote reads go through [`read_remote_memory`] and are
-//! capped by [`MAX_REMOTE_READ`].
+//! Process execution, filesystem activity, and IP network connect/listen
+//! activity are decoded into semantic events. Decoders consume [`TraceStop`]
+//! values from [`TraceVisitor`] while the tracee is stopped. Coverage remains
+//! `INCOMPLETE`. Remote reads go through [`read_remote_memory`] and are capped
+//! by [`MAX_REMOTE_READ`].
 //!
 //! The ptrace session is compiled only for Linux. On any other target this
 //! crate still builds the lifecycle state machine and rejects oversize
@@ -22,13 +23,19 @@
 
 mod abi;
 mod cleanup;
+#[cfg(target_os = "linux")]
+mod emitter;
 mod error;
+#[cfg(target_os = "linux")]
+mod filesystem;
 mod lifecycle;
 mod lineage;
 mod memory;
 mod network;
 mod options;
 mod proc_status;
+#[cfg(target_os = "linux")]
+mod process;
 mod report;
 mod syscall;
 mod syscall_info;
@@ -57,6 +64,8 @@ pub use wait_status::{decode_wait_status, DecodedWait};
 
 #[cfg(target_os = "linux")]
 pub use backend::LinuxObserver;
+#[cfg(target_os = "linux")]
+pub use filesystem::{FilesystemDecodeError, FilesystemDecoder, FilesystemFact};
 #[cfg(target_os = "linux")]
 pub use memory::read_remote_memory;
 #[cfg(target_os = "linux")]

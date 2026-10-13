@@ -7,9 +7,12 @@
 //! SQLite. `drifti-core` does not open a database and does not issue SQL.
 //!
 //! [`Store::open`] creates schema version 1 when the file is missing or has
-//! no tables. A file that already has that version is left in place. Any
-//! other version, or a file that is not a database, is returned as an error
-//! and is not deleted.
+//! no tables. A file already at that version is opened in place. A version-1
+//! file that has no `execution_event_failures` table gains that empty table
+//! in one transaction; the version stays 1 and existing rows are kept. The
+//! next open sees the table and does not migrate again. Any other version,
+//! or a file that is not a database, is an error and is not deleted. A
+//! migration that fails is rolled back and is not opened as success.
 //!
 //! Observation written here is not authorization. `COMPLETE` coverage is a
 //! stored declaration, not a policy decision, and this crate does not turn a
@@ -18,32 +21,53 @@
 //! [`Store::create_execution`] records a started execution. It does not grant
 //! a capability. Command metadata is the program and an argument count;
 //! argument values, prompts, and responses are not columns.
+//!
+//! [`events::EventBatchWriter`] persists SPEC-004 events from a bounded
+//! channel. A failed batch is returned to the caller and cannot be recorded
+//! as `COMPLETE` coverage.
+//!
+//! [`ReadRepository`] reads that history back. Event order is `sequence`.
+//! Action and canonical-resource lookups are equality queries on the schema
+//! v1 indexes `idx_events_action` and `idx_events_canonical_resource`.
+//! Process lineage remains the existing [`ProcessRepository`] lookup and is
+//! also available on [`ReadRepository`]. Coverage stays on the execution
+//! record. Outcome and evidence length stay on each event. Payloads,
+//! argument values, secrets, prompts, and file bytes are not reconstructed.
 
 #![forbid(unsafe_code)]
 
 mod error;
+mod events;
 mod execution;
+mod migrate;
 mod process;
+mod read;
 mod schema;
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags};
 
 pub use error::StoreError;
+pub use events::{
+    bounded_event_channel, EventBatchWriter, EventWriteError, DEFAULT_EVENT_BATCH_LIMIT,
+};
 pub use execution::{
     CapabilityDomain, CommandMetadata, CoverageStatus, ExecutionId, ExecutionRecord,
     ExecutionRepository, FinishExecution, Lifecycle,
 };
 pub use process::{ProcessLineage, ProcessRecord, ProcessRepository};
+pub use read::{ExecutionHistory, ReadRepository};
 pub use schema::{
     canonical_resource, parse_canonical_resource, sqlite_i64, CanonicalResource,
-    OwnedCanonicalResource, DATABASE_FILE, MAX_IDENTITY_BYTES, PROHIBITED_COLUMN_NAMES,
-    SCHEMA_VERSION, STATE_DIR,
+    OwnedCanonicalResource, DATABASE_FILE, MAX_IDENTITY_BYTES, MAX_NETWORK_HOST_BYTES,
+    PROHIBITED_COLUMN_NAMES, SCHEMA_VERSION, STATE_DIR,
 };
 
 use execution::IdGenerator;
+use migrate::{migrate, version_is_supported, MigrateError, MIGRATIONS};
 use schema::DDL;
 
 /// Open SQLite file under `{workspace}/.drifti/state.db`.
@@ -52,13 +76,19 @@ pub struct Store {
     path: PathBuf,
     connection: Connection,
     ids: IdGenerator,
+    /// Executions whose event batch failed and has not since been committed.
+    /// The same ids are stored in `execution_event_failures`, so a later open
+    /// still refuses `COMPLETE`.
+    event_write_failures: BTreeSet<ExecutionId>,
 }
 
 impl Store {
     /// Opens or creates the workspace database.
     ///
-    /// A second open of a version-1 file does not rewrite its rows. An
-    /// incompatible file is not modified.
+    /// A second open of a current version-1 file does not rewrite its rows.
+    /// An older version-1 file gains `execution_event_failures` without a
+    /// version bump. An incompatible file is not modified. A migration that
+    /// fails rolls back to the version stored before that attempt.
     pub fn open(workspace: &Path) -> Result<Self, StoreError> {
         let directory = workspace.join(STATE_DIR);
         fs::create_dir_all(&directory).map_err(|source| StoreError::CreateStateDir {
@@ -73,19 +103,31 @@ impl Store {
             Inspect::Missing | Inspect::Empty => {
                 let mut connection = open_read_write(&path)?;
                 initialize(&mut connection).map_err(|source| map_sqlite(&path, source))?;
-                Ok(Self {
-                    path,
-                    connection,
-                    ids: IdGenerator::new(),
-                })
+                Ok(opened(path, connection))
             }
             Inspect::Compatible => {
-                let connection = open_read_write(&path)?;
-                Ok(Self {
-                    path,
-                    connection,
-                    ids: IdGenerator::new(),
-                })
+                let mut connection = open_read_write(&path)?;
+                match migrate(&mut connection, MIGRATIONS, SCHEMA_VERSION) {
+                    Ok(_) => Ok(opened(path, connection)),
+                    Err(MigrateError::Failed { version, source }) => {
+                        Err(StoreError::MigrationFailed {
+                            path,
+                            version,
+                            source,
+                        })
+                    }
+                    Err(MigrateError::Unsupported { version }) => {
+                        Err(StoreError::IncompatibleSchema {
+                            path,
+                            found: Some(version),
+                            expected: SCHEMA_VERSION,
+                        })
+                    }
+                    Err(MigrateError::Read(source)) => Err(map_sqlite(&path, source)),
+                    Err(MigrateError::InvalidPlan) => {
+                        Err(StoreError::InvalidMigrationPlan { path })
+                    }
+                }
             }
             Inspect::Incompatible { found } => Err(StoreError::IncompatibleSchema {
                 path,
@@ -138,10 +180,20 @@ fn inspect(path: &Path) -> Result<Inspect, StoreError> {
     }
     let stored = stored_version(&connection).map_err(|source| map_sqlite(path, source))?;
     let user_version = read_user_version(&connection).map_err(|source| map_sqlite(path, source))?;
-    if stored == Some(SCHEMA_VERSION) && user_version == SCHEMA_VERSION {
-        Ok(Inspect::Compatible)
-    } else {
-        Ok(Inspect::Incompatible { found: stored })
+    if let Some(version) = stored {
+        if version_is_supported(version, user_version) {
+            return Ok(Inspect::Compatible);
+        }
+    }
+    Ok(Inspect::Incompatible { found: stored })
+}
+
+fn opened(path: PathBuf, connection: Connection) -> Store {
+    Store {
+        path,
+        connection,
+        ids: IdGenerator::new(),
+        event_write_failures: BTreeSet::new(),
     }
 }
 
