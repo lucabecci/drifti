@@ -10,6 +10,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
+- SPEC-007 learning, generalization, presentation, and authorization-separation acceptance matrix in `drifti-core`.
 - Actionable contract validation errors that name the field path, a bounded value, and the expected form, including a dedicated unsupported-version failure, in `drifti-core`.
 - Deterministic serialization of a version-1 contract into stable `drifti.yaml` text in `drifti-core`.
 - Compilation of a parsed version-1 contract into typed filesystem, executable, and network policy rules in `drifti-core`.
