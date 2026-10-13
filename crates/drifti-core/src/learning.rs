@@ -406,6 +406,21 @@ impl ProfileStatistics {
     pub const fn last_seen(self) -> u64 {
         self.last_seen
     }
+
+    #[doc(hidden)]
+    pub const fn from_counts(
+        runs_observed: u64,
+        observation_count: u64,
+        first_seen: u64,
+        last_seen: u64,
+    ) -> Self {
+        Self {
+            runs_observed,
+            observation_count,
+            first_seen,
+            last_seen,
+        }
+    }
 }
 
 /// Deterministic profile counts for one learning selection.
@@ -433,6 +448,15 @@ impl AggregatedProfile {
     /// Exercised capabilities in identity order.
     pub fn capabilities(&self) -> impl Iterator<Item = &Capability> {
         self.entries.keys().map(CapabilityKey::capability)
+    }
+
+    /// Exercised capabilities with their aggregated statistics, in identity order.
+    pub fn capability_statistics(
+        &self,
+    ) -> impl Iterator<Item = (&Capability, ProfileStatistics)> + '_ {
+        self.entries
+            .iter()
+            .map(|(key, stats)| (key.capability(), *stats))
     }
 
     /// Stable text for this profile. Identical histories produce the same bytes.
