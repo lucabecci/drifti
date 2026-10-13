@@ -15,31 +15,32 @@ use drifti_observer::{
     ObservedResource as ObserverResource, Operation as ObserverOperation,
     Outcome as ObserverOutcome,
 };
-use drifti_store::{ExecutionRecord, Lifecycle, Store};
+use drifti_store::{ExecutionRecord, Store};
 
-use super::workspace::store_error;
 use super::AppError;
 
 pub fn learning_input_from_store(
     store: &Store,
     roots: &FilesystemRoots,
 ) -> Result<LearningInput, AppError> {
-    let executions = store.list_executions().map_err(store_error)?;
+    let executions = store.list_executions().map_err(store_internal)?;
     let mut eligible = Vec::new();
     for record in executions {
-        if record.lifecycle() != Lifecycle::Finished {
+        if record.lifecycle() != drifti_store::Lifecycle::Finished {
             continue;
         }
+        let execution_id = record.id().clone();
         let Some(attempts) = attempts_for_execution(store, roots, &record)? else {
             continue;
         };
         if attempts.is_empty() {
             continue;
         }
-        let id =
-            EligibleExecutionId::new(record.id().as_str()).map_err(|error| AppError::Internal {
+        let id = EligibleExecutionId::new(execution_id.as_str()).map_err(|error| {
+            AppError::Internal {
                 message: format!("invalid execution id for learning: {error}"),
-            })?;
+            }
+        })?;
         eligible.push(EligibleExecution::new(id, attempts));
     }
     if eligible.is_empty() {
@@ -58,7 +59,7 @@ fn attempts_for_execution(
 ) -> Result<Option<Vec<CapabilityAttempt>>, AppError> {
     let events = store
         .events_for_execution(record.id())
-        .map_err(store_error)?;
+        .map_err(store_internal)?;
     if events.is_empty() {
         return Ok(None);
     }
@@ -110,5 +111,11 @@ fn map_outcome(_outcome: &ObserverOutcome, exercised: bool) -> CoreOutcome {
         CoreOutcome::Success
     } else {
         CoreOutcome::Failure
+    }
+}
+
+fn store_internal(error: drifti_store::StoreError) -> AppError {
+    AppError::Internal {
+        message: format!("store error: {error}"),
     }
 }

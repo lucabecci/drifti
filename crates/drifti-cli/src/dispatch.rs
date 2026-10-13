@@ -3,12 +3,17 @@
 
 //! Map parsed CLI commands to application services.
 
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 use crate::app::{AppError, ApplicationServices, CliError, CommandContext};
 use crate::cli::{Commands, DriftiCli};
-use crate::exit::{EXIT_COMMAND, EXIT_INTERNAL, EXIT_NOT_READY, EXIT_SUCCESS, EXIT_USER};
+use crate::exit::{
+    map_command_outcome, CommandExitInput, EXIT_INTERNAL, EXIT_INVALID_CONTRACT, EXIT_USAGE,
+};
 use crate::output::OutputConfig;
+use crate::render::render_result;
+use crate::result::CommandResult;
 
 pub fn validate_wrapped_command(
     raw_args: &[String],
@@ -46,48 +51,70 @@ pub fn dispatch<S: ApplicationServices>(
     cwd: PathBuf,
 ) -> u8 {
     let ctx = command_context(&cli, cwd);
-    let result: Result<u8, AppError> = match cli.command {
-        Commands::Init => services.init(&ctx).map(|_| EXIT_SUCCESS),
+    let mut stdout = io::stdout();
+    let outcome = match cli.command {
+        Commands::Init => services.init(&ctx).map(|result| (result, None)),
         Commands::Observe { .. } => {
             let command = match validate_wrapped_command(raw_args, "observe") {
                 Ok(command) => command,
                 Err(error) => {
-                    eprintln!("error: {error}");
-                    return EXIT_USER;
+                    let _ = writeln!(io::stderr(), "error: {error}");
+                    return EXIT_USAGE;
                 }
             };
-            services.observe(&ctx, &command).map(|exit| exit.code)
+            services
+                .observe(&ctx, &command)
+                .map(|outcome| (outcome.result, Some(u16::from(outcome.process_exit))))
         }
-        Commands::Learn => services.learn(&ctx).map(|_| EXIT_SUCCESS),
-        Commands::Generate { write } => services.generate(&ctx, write).map(|_| EXIT_SUCCESS),
+        Commands::Learn => services.learn(&ctx).map(|result| (result, None)),
+        Commands::Generate { write } => services.generate(&ctx, write).map(|result| (result, None)),
         Commands::Verify { .. } => {
             let command = match validate_wrapped_command(raw_args, "verify") {
                 Ok(command) => command,
                 Err(error) => {
-                    eprintln!("error: {error}");
-                    return EXIT_USER;
+                    let _ = writeln!(io::stderr(), "error: {error}");
+                    return EXIT_USAGE;
                 }
             };
-            services.verify(&ctx, &command).map(|exit| exit.code)
+            services
+                .verify(&ctx, &command)
+                .map(|outcome| (outcome.result, Some(u16::from(outcome.process_exit))))
         }
-        Commands::Diff => services.diff(&ctx).map(|_| EXIT_SUCCESS),
-        Commands::Doctor => services.doctor(&ctx).map(|_| EXIT_SUCCESS),
+        Commands::Diff => services.diff(&ctx).map(|result| (result, None)),
+        Commands::Doctor => services.doctor(&ctx).map(|result| (result, None)),
     };
 
-    match result {
-        Ok(code) => code,
+    match outcome {
+        Ok((result, process_override)) => {
+            finish_command(&result, process_override, &ctx.output, &mut stdout)
+        }
         Err(error) => {
-            eprintln!("error: {error}");
+            let _ = writeln!(io::stderr(), "error: {error}");
             map_app_error(error)
         }
     }
 }
 
+fn finish_command(
+    result: &CommandResult,
+    process_override: Option<u16>,
+    output: &OutputConfig,
+    stdout: &mut impl Write,
+) -> u8 {
+    if render_result(result, output, stdout).is_err() {
+        return EXIT_INTERNAL;
+    }
+    let input = CommandExitInput {
+        class: result.exit_class(),
+        process_exit: process_override.or_else(|| result.process_exit().map(u16::from)),
+    };
+    map_command_outcome(input)
+}
+
 pub fn map_app_error(error: AppError) -> u8 {
     match error {
-        AppError::Internal { .. } => EXIT_INTERNAL,
-        AppError::User { .. } => EXIT_USER,
-        AppError::InvalidContract { .. } => EXIT_COMMAND,
-        AppError::NotImplemented { .. } => EXIT_NOT_READY,
+        AppError::Internal { .. } | AppError::NotImplemented { .. } => EXIT_INTERNAL,
+        AppError::InvalidContract { .. } => EXIT_INVALID_CONTRACT,
+        AppError::User { .. } => EXIT_USAGE,
     }
 }

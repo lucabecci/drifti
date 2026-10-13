@@ -3,39 +3,51 @@
 
 //! Stub services for bootstrap tests and pre-orchestration CLI wiring.
 
-use super::{AppError, ApplicationServices, CommandContext, ObserveExit, VerifyExit};
+use super::{AppError, ApplicationServices, CommandContext, ProcessOutcome};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct StubApplicationServices;
 
 impl ApplicationServices for StubApplicationServices {
-    fn init(&self, _ctx: &CommandContext) -> Result<(), AppError> {
+    fn init(&self, _ctx: &CommandContext) -> Result<crate::result::CommandResult, AppError> {
         Err(AppError::NotImplemented { command: "init" })
     }
 
-    fn observe(&self, _ctx: &CommandContext, _command: &[String]) -> Result<ObserveExit, AppError> {
+    fn observe(
+        &self,
+        _ctx: &CommandContext,
+        _command: &[String],
+    ) -> Result<ProcessOutcome, AppError> {
         Err(AppError::NotImplemented { command: "observe" })
     }
 
-    fn learn(&self, _ctx: &CommandContext) -> Result<(), AppError> {
+    fn learn(&self, _ctx: &CommandContext) -> Result<crate::result::CommandResult, AppError> {
         Err(AppError::NotImplemented { command: "learn" })
     }
 
-    fn generate(&self, _ctx: &CommandContext, _write: bool) -> Result<(), AppError> {
+    fn generate(
+        &self,
+        _ctx: &CommandContext,
+        _write: bool,
+    ) -> Result<crate::result::CommandResult, AppError> {
         Err(AppError::NotImplemented {
             command: "generate",
         })
     }
 
-    fn verify(&self, _ctx: &CommandContext, _command: &[String]) -> Result<VerifyExit, AppError> {
+    fn verify(
+        &self,
+        _ctx: &CommandContext,
+        _command: &[String],
+    ) -> Result<ProcessOutcome, AppError> {
         Err(AppError::NotImplemented { command: "verify" })
     }
 
-    fn diff(&self, _ctx: &CommandContext) -> Result<(), AppError> {
+    fn diff(&self, _ctx: &CommandContext) -> Result<crate::result::CommandResult, AppError> {
         Err(AppError::NotImplemented { command: "diff" })
     }
 
-    fn doctor(&self, _ctx: &CommandContext) -> Result<(), AppError> {
+    fn doctor(&self, _ctx: &CommandContext) -> Result<crate::result::CommandResult, AppError> {
         Err(AppError::NotImplemented { command: "doctor" })
     }
 }

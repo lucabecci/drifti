@@ -9,8 +9,8 @@ use std::fmt;
 pub enum AppError {
     NotImplemented { command: &'static str },
     User { message: String },
-    Internal { message: String },
     InvalidContract { message: String },
+    Internal { message: String },
 }
 
 impl fmt::Display for AppError {
@@ -20,8 +20,8 @@ impl fmt::Display for AppError {
                 write!(f, "{command} is not implemented yet")
             }
             Self::User { message }
-            | Self::Internal { message }
-            | Self::InvalidContract { message } => f.write_str(message),
+            | Self::InvalidContract { message }
+            | Self::Internal { message } => f.write_str(message),
         }
     }
 }

@@ -6,7 +6,7 @@
 use clap::CommandFactory;
 use drifti_cli::app::StubApplicationServices;
 use drifti_cli::cli::{Commands, DriftiCli};
-use drifti_cli::{run_with_services, EXIT_NOT_READY, EXIT_USER};
+use drifti_cli::{run_with_services, EXIT_INTERNAL, EXIT_USAGE};
 
 #[test]
 fn root_help_is_well_formed() {
@@ -75,19 +75,19 @@ fn observe_without_separator_fails_before_stub() {
         &StubApplicationServices,
         ["drifti", "observe", "echo", "hello"],
     );
-    assert_eq!(code, i32::from(EXIT_USER));
+    assert_eq!(code, i32::from(EXIT_USAGE));
 }
 
 #[test]
 fn observe_without_command_fails_before_stub() {
     let code = run_with_services(&StubApplicationServices, ["drifti", "observe"]);
-    assert_eq!(code, i32::from(EXIT_USER));
+    assert_eq!(code, i32::from(EXIT_USAGE));
 }
 
 #[test]
 fn observe_empty_after_separator_fails_before_stub() {
     let code = run_with_services(&StubApplicationServices, ["drifti", "observe", "--"]);
-    assert_eq!(code, i32::from(EXIT_USER));
+    assert_eq!(code, i32::from(EXIT_USAGE));
 }
 
 #[test]
@@ -96,13 +96,13 @@ fn verify_without_separator_fails_before_stub() {
         &StubApplicationServices,
         ["drifti", "verify", "cargo", "test"],
     );
-    assert_eq!(code, i32::from(EXIT_USER));
+    assert_eq!(code, i32::from(EXIT_USAGE));
 }
 
 #[test]
 fn init_stub_returns_not_implemented_exit() {
     let code = run_with_services(&StubApplicationServices, ["drifti", "init"]);
-    assert_eq!(code, i32::from(EXIT_NOT_READY));
+    assert_eq!(code, i32::from(EXIT_INTERNAL));
 }
 
 #[test]
@@ -113,5 +113,25 @@ fn subcommand_help_smoke() {
             continue;
         }
         sub.clone().debug_assert();
+    }
+}
+
+#[test]
+fn subcommand_help_lists_examples() {
+    let root = DriftiCli::command();
+    for name in [
+        "init", "observe", "learn", "generate", "verify", "diff", "doctor",
+    ] {
+        let sub = root
+            .find_subcommand(name)
+            .unwrap_or_else(|| panic!("missing subcommand {name}"));
+        let after = sub
+            .get_after_help()
+            .map(|text| text.to_string())
+            .unwrap_or_default();
+        assert!(
+            after.contains("Example"),
+            "{name} help should include an example"
+        );
     }
 }

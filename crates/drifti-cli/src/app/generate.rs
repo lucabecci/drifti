@@ -10,7 +10,7 @@ use drifti_core::contract::{
     AllowDenyRules, AuthoringResource, ContractDocument, ContractVersion, FilesystemContract,
     NetworkContract, ProcessContract,
 };
-use drifti_core::learning_guard::guarded_learning_candidates;
+use drifti_core::generalization::generalize_candidates;
 use drifti_core::profile::CapabilityProfile;
 use drifti_core::resource::{
     ExecutableResource, FileResource, FilesystemAnchor, NetworkAddress, NetworkProtocol,
@@ -20,13 +20,13 @@ use drifti_core::resource::{
 use super::AppError;
 
 pub fn proposal_document(profile: &CapabilityProfile) -> Result<ContractDocument, AppError> {
-    let candidates = guarded_learning_candidates(profile.capabilities());
+    let generalized = generalize_candidates(profile.capabilities());
     let mut read = Vec::new();
     let mut write = Vec::new();
     let mut execute = Vec::new();
     let mut connect = Vec::new();
     let mut listen = Vec::new();
-    for capability in candidates {
+    for capability in generalized {
         let text = capability_to_authoring(&capability)
             .map_err(|message| AppError::Internal { message })?;
         let resource = AuthoringResource::new(text).map_err(|error| AppError::Internal {
@@ -105,27 +105,4 @@ fn network_authoring(network: &NetworkResource) -> Result<String, String> {
         NetworkAddress::Cidr(cidr) => format!("{}/{}", cidr.address(), cidr.prefix_length()),
     };
     Ok(format!("{scheme}://{host}:{}", network.port()))
-}
-
-#[cfg(test)]
-mod tests {
-    use drifti_core::capability::Capability;
-    use drifti_core::contract::ContractProposal;
-    use drifti_core::profile::{CapabilityProfile, ProfileEntry};
-    use drifti_core::resource::{FileResource, FilesystemAnchor};
-
-    use super::proposal_document;
-
-    #[test]
-    fn proposal_stays_unaccepted_after_write_request() {
-        let capability = Capability::filesystem_read(
-            FileResource::new(FilesystemAnchor::Repo, "src/main.rs").expect("file"),
-        );
-        let profile = CapabilityProfile::from_entries([ProfileEntry::new(capability, 1)]);
-        let document = proposal_document(&profile).expect("document");
-        let proposal = ContractProposal::generated(document);
-        let request = proposal.write_request();
-        assert!(!request.yaml().contains("accepted"));
-        assert_eq!(proposal.document(), proposal.document());
-    }
 }

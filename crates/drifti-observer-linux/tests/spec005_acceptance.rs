@@ -33,7 +33,7 @@ fn observe(
     execution: u64,
 ) -> (drifti_observer::ExecutionResult, Vec<ObservedEvent>) {
     let _exclusive = exclusive_tracer();
-    let observer = LinuxObserver::new(ExecutionId::from_raw(execution));
+    let observer = LinuxObserver::new(ExecutionId::from_raw(u128::from(execution)));
     let (sink, cursor) = EventSink::bounded(NonZeroUsize::new(128).unwrap());
     let collector = thread::spawn(move || {
         let mut events = Vec::new();
