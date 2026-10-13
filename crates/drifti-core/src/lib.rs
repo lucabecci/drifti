@@ -47,6 +47,8 @@
 //! [`drift::DriftKind::Reduced`]. Resource text is not compared by prefix.
 //! A [`drift::DriftFinding`] may carry severity metadata later. This
 //! comparison leaves severity unset and does not infer intent.
+//! [`severity::classify`] attaches deterministic severity in a separate step;
+//! [`diff::diff`] still leaves severity unset on structural findings.
 //! [`foundation`] is the serde boundary the domain types use.
 
 #![forbid(unsafe_code)]
@@ -63,3 +65,4 @@ pub mod observation;
 pub mod policy;
 pub mod profile;
 pub mod resource;
+pub mod severity;
