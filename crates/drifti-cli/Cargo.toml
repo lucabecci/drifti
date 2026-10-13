@@ -13,9 +13,13 @@ repository.workspace = true
 name = "drifti"
 path = "src/main.rs"
 
-# Parsing and orchestration only. Domain logic stays in drifti-core (future wiring).
 [dependencies]
 clap = { version = "=4.5.40", features = ["derive", "env"] }
+drifti-observer = { path = "../drifti-observer" }
+drifti-store = { path = "../drifti-store" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+drifti-observer-linux = { path = "../drifti-observer-linux" }
 
 [lints]
 workspace = true

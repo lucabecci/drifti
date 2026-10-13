@@ -164,6 +164,9 @@ name = "drifti-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "drifti-observer",
+ "drifti-observer-linux",
+ "drifti-store",
 ]
 
 [[package]]
