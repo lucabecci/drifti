@@ -3,6 +3,7 @@
 
 //! Default application services wired for the `drifti` binary.
 
+use super::intelligence;
 use super::observe;
 use super::{AppError, ApplicationServices, CommandContext, ObserveExit, VerifyExit};
 
@@ -18,22 +19,20 @@ impl ApplicationServices for DefaultApplicationServices {
         observe::observe(ctx, command)
     }
 
-    fn learn(&self, _ctx: &CommandContext) -> Result<(), AppError> {
-        Err(AppError::NotImplemented { command: "learn" })
+    fn learn(&self, ctx: &CommandContext) -> Result<(), AppError> {
+        intelligence::learn(ctx)
     }
 
-    fn generate(&self, _ctx: &CommandContext, _write: bool) -> Result<(), AppError> {
-        Err(AppError::NotImplemented {
-            command: "generate",
-        })
+    fn generate(&self, ctx: &CommandContext, write: bool) -> Result<(), AppError> {
+        intelligence::generate(ctx, write)
     }
 
     fn verify(&self, _ctx: &CommandContext, _command: &[String]) -> Result<VerifyExit, AppError> {
         Err(AppError::NotImplemented { command: "verify" })
     }
 
-    fn diff(&self, _ctx: &CommandContext) -> Result<(), AppError> {
-        Err(AppError::NotImplemented { command: "diff" })
+    fn diff(&self, ctx: &CommandContext) -> Result<(), AppError> {
+        intelligence::diff(ctx)
     }
 
     fn doctor(&self, _ctx: &CommandContext) -> Result<(), AppError> {

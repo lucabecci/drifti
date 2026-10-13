@@ -18,6 +18,7 @@ use drifti_store::{
 };
 
 use super::exit_code::{process_exit_for_observe, ObserveRun};
+use crate::app::workspace::store_error;
 use crate::app::{AppError, CommandContext, ObserveExit};
 
 pub fn observe_on_linux(ctx: &CommandContext, command: &[String]) -> Result<ObserveExit, AppError> {
@@ -129,12 +130,6 @@ fn map_domain(domain: ObserverDomain) -> CapabilityDomain {
         ObserverDomain::Filesystem => CapabilityDomain::Filesystem,
         ObserverDomain::Network => CapabilityDomain::Network,
         ObserverDomain::Process => CapabilityDomain::Process,
-    }
-}
-
-fn store_error(error: drifti_store::StoreError) -> AppError {
-    AppError::Internal {
-        message: error.to_string(),
     }
 }
 

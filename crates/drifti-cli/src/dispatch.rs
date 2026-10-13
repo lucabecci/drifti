@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::app::{AppError, ApplicationServices, CliError, CommandContext};
 use crate::cli::{Commands, DriftiCli};
-use crate::exit::{EXIT_INTERNAL, EXIT_NOT_READY, EXIT_SUCCESS, EXIT_USER};
+use crate::exit::{EXIT_COMMAND, EXIT_INTERNAL, EXIT_NOT_READY, EXIT_SUCCESS, EXIT_USER};
 use crate::output::OutputConfig;
 
 pub fn validate_wrapped_command(
@@ -87,6 +87,7 @@ pub fn map_app_error(error: AppError) -> u8 {
     match error {
         AppError::Internal { .. } => EXIT_INTERNAL,
         AppError::User { .. } => EXIT_USER,
+        AppError::InvalidContract { .. } => EXIT_COMMAND,
         AppError::NotImplemented { .. } => EXIT_NOT_READY,
     }
 }
