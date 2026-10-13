@@ -39,6 +39,9 @@
 //! counts. No learning field is
 //! [`policy::Decision::Allowed`]. Learning does not query a store
 //! and does not accept a contract.
+//! [`generalization`] may collapse compatible repo-local paths.
+//! [`learning_guard::guarded_learning_candidates`] applies forbidden-broadening
+//! guards after that step.
 //! [`diff::diff`] normalizes a reference set and a current set, then groups
 //! each side by capability identity. The same canonical set yields an empty
 //! [`drift::DriftResult`]. A capability present only in the current set is
@@ -63,6 +66,7 @@ pub mod drift;
 pub mod foundation;
 pub mod generalization;
 pub mod learning;
+pub mod learning_guard;
 pub mod observation;
 pub mod policy;
 pub mod presentation;
