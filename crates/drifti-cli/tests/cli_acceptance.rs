@@ -13,8 +13,15 @@ use drifti_cli::exit::{
 };
 use drifti_cli::output::{ColorPolicy, OutputConfig, OutputFormat};
 use drifti_cli::render::render_result;
-use drifti_cli::result::{CommandResult, InitResult, ResultStatus};
+use std::num::NonZeroUsize;
+
+use drifti_cli::result::{CommandResult, InitResult, ResultStatus, VerifyResult};
 use drifti_cli::{run_with_services, EXIT_USAGE};
+use drifti_observer::{
+    EvidenceMeta, MonotonicTimestamp, ObservedEvent, ObservedResource, Operation, Outcome,
+    ParentIdentity, ProcessIdentity,
+};
+use drifti_store::{CommandMetadata, CoverageStatus, EventBatchWriter, FinishExecution, Store};
 
 static WORKDIR: Mutex<()> = Mutex::new(());
 
@@ -141,6 +148,108 @@ fn verify_invalid_contract_exits_123() {
         ["drifti", "verify", "--", "/bin/true"],
     );
     assert_eq!(code, i32::from(EXIT_INVALID_CONTRACT));
+}
+
+#[test]
+fn verify_structured_statuses_map_to_spec_exits() {
+    let violation = CommandResult::Verify(VerifyResult {
+        status: ResultStatus::Violation,
+        coverage: "complete".to_owned(),
+        child_exit: Some(0),
+        evaluations: Vec::new(),
+    });
+    assert_eq!(
+        map_command_outcome(CommandExitInput {
+            class: violation.exit_class(),
+            process_exit: Some(0),
+        }),
+        EXIT_VIOLATION
+    );
+    let incomplete = CommandResult::Verify(VerifyResult {
+        status: ResultStatus::Incomplete,
+        coverage: "incomplete".to_owned(),
+        child_exit: Some(0),
+        evaluations: Vec::new(),
+    });
+    assert_eq!(
+        map_command_outcome(CommandExitInput {
+            class: incomplete.exit_class(),
+            process_exit: Some(0),
+        }),
+        EXIT_INCOMPLETE
+    );
+}
+
+#[test]
+fn quiet_hides_successful_init_output() {
+    let result = CommandResult::Init(InitResult {
+        status: ResultStatus::Ok,
+        state_dir: ".drifti".to_owned(),
+        contract_present: false,
+        store_path: None,
+    });
+    let quiet = OutputConfig::new(OutputFormat::Text, true, false, ColorPolicy::Never);
+    let rendered = render_to_string(|stdout| {
+        render_result(&result, &quiet, stdout).expect("render");
+    });
+    assert!(rendered.is_empty());
+}
+
+#[test]
+fn learn_render_profile_not_accepted_contract() {
+    let (dir, _guard) = isolated_workdir();
+    let mut store = Store::open(dir.path()).expect("store");
+    seed_finished_read(&mut store, "src/main.rs");
+    let text_output = OutputConfig::new(OutputFormat::Text, false, false, ColorPolicy::Never);
+    let json_output = OutputConfig::new(OutputFormat::Json, false, false, ColorPolicy::Never);
+    let ctx = |format| CommandContext {
+        cwd: dir.path().to_path_buf(),
+        output: format,
+    };
+    let learn = MvpApplicationServices
+        .learn(&ctx(text_output))
+        .expect("learn");
+    let text = render_to_string(|stdout| {
+        render_result(&learn, &ctx(text_output).output, stdout).expect("text");
+    });
+    assert!(text.contains("Capability Profile"));
+    assert!(!text.to_lowercase().contains("accepted contract"));
+    let json = render_to_string(|stdout| {
+        render_result(&learn, &ctx(json_output).output, stdout).expect("json");
+    });
+    let parsed: serde_json::Value = serde_json::from_str(json.trim()).expect("json learn");
+    assert_eq!(parsed["command"], "learn");
+    assert_eq!(parsed["status"], "ok");
+}
+
+fn seed_finished_read(store: &mut Store, path: &str) {
+    let metadata = CommandMetadata::try_new("echo", 0).expect("metadata");
+    let record = store.create_execution(Some(metadata)).expect("execution");
+    let id = record.id().clone();
+    let event = ObservedEvent::new(
+        drifti_observer::ExecutionId::from_raw(id.to_raw()),
+        0,
+        MonotonicTimestamp::from_nanos(1),
+        ProcessIdentity::new(Some(10), Some(11)),
+        Some(ParentIdentity::new(1)),
+        Operation::FilesystemRead,
+        ObservedResource::file(path).expect("path"),
+        Outcome::success(),
+        EvidenceMeta::with_byte_length(1),
+    );
+    let writer = EventBatchWriter::new(NonZeroUsize::new(1).expect("limit"));
+    writer
+        .write_batch(store, &id, vec![event])
+        .expect("write events");
+    let finish = FinishExecution::try_new(
+        CoverageStatus::Complete,
+        std::iter::empty(),
+        Some(0),
+        None,
+        Some("test"),
+    )
+    .expect("finish");
+    store.finish_execution(&id, finish).expect("finish");
 }
 
 #[test]
