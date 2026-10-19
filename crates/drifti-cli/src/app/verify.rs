@@ -3,6 +3,8 @@
 
 //! Thin verify orchestration over compiled policy.
 
+use std::collections::HashSet;
+
 use drifti_core::capability::Capability;
 use drifti_core::policy::{CompiledPolicy, Coverage, Decision, Evaluation};
 
@@ -11,6 +13,16 @@ pub struct VerifySummary {
     pub denied: bool,
     pub indeterminate: bool,
     pub evaluations: Vec<(Capability, Evaluation)>,
+}
+
+/// Keeps the first occurrence of each canonical capability (SPEC-010 deduplication).
+#[must_use]
+pub fn dedupe_capabilities(capabilities: Vec<Capability>) -> Vec<Capability> {
+    let mut seen = HashSet::new();
+    capabilities
+        .into_iter()
+        .filter(|capability| seen.insert(capability.clone()))
+        .collect()
 }
 
 /// Evaluates each exercised capability. `UNKNOWN` alone is not a violation.
@@ -57,7 +69,7 @@ mod tests {
     use drifti_core::policy::{CompiledPolicy, Coverage, Rule, RuleId};
     use drifti_core::resource::{FileResource, FilesystemAnchor};
 
-    use super::{apply_coverage_guard, evaluate_exercised};
+    use super::{apply_coverage_guard, dedupe_capabilities, evaluate_exercised};
 
     fn read(path: &str) -> Capability {
         Capability::filesystem_read(FileResource::new(FilesystemAnchor::Repo, path).expect("file"))
@@ -113,5 +125,13 @@ mod tests {
         );
         assert!(!summary.denied);
         assert!(summary.indeterminate);
+    }
+
+    #[test]
+    fn dedupe_preserves_first_capability_occurrence() {
+        let cap = read("src/lib.rs");
+        let deduped = dedupe_capabilities(vec![cap.clone(), cap.clone()]);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0], cap);
     }
 }
