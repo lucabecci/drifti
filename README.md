@@ -10,15 +10,39 @@ Authored and maintained by Luca Becci.
 
 ## Status
 
-`drifti-core` is the portable domain crate. The CLI is not implemented, and the observer, store, and CLI crates are not created yet.
+**v0.1 MVP — Linux early adopters.** The workspace ships `drifti-core`, `drifti-observer`, `drifti-observer-linux`, `drifti-store`, and the **`drifti` CLI**. Observation and verification run on **Linux** (ptrace). macOS builds the CLI but native observation is not available yet.
+
+There is no published binary release on GitHub yet; build from source (see below).
 
 ## Build
 
-Requires Rust 1.84 or newer.
+Requires Rust **1.84** or newer.
+
+```sh
+cargo build -p drifti-cli --release
+./target/release/drifti --help
+```
+
+Full workspace checks:
 
 ```sh
 cargo test --workspace --all-targets
 ```
+
+Linux install and workflow detail: [docs/linux/README.md](docs/linux/README.md).
+
+## Quick start (Linux)
+
+```sh
+drifti init
+drifti doctor
+drifti observe -- ./your-command
+drifti learn
+drifti generate --write   # review drifti.yaml before trusting
+drifti verify -- ./your-command
+```
+
+Traces stay under `.drifti/` locally. Put the reviewed contract in `drifti.yaml` and commit it like any other policy file.
 
 ## What it does
 
@@ -29,6 +53,16 @@ Observe → Learn → Capability contract → Verify → Detect drift
 ```
 
 The trust boundary is deterministic. An LLM is never required to use Drifti, and it never approves a capability or changes a trusted contract.
+
+## Workspace
+
+| Crate | Role |
+|-------|------|
+| `drifti-core` | Capabilities, policy, contracts, learning, drift |
+| `drifti-observer` | Platform-neutral observation types |
+| `drifti-observer-linux` | Linux ptrace backend |
+| `drifti-store` | SQLite execution history |
+| `drifti-cli` | `drifti` command |
 
 ## License
 

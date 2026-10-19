@@ -10,6 +10,9 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
+- Linux quick start and install notes in [docs/linux/README.md](docs/linux/README.md).
+- SPEC-010 verify pipeline (preflight, dedupe, e2e acceptance tests) in `drifti-cli`.
+- SPEC-009 CLI commands, exit codes, and text/JSON output in `drifti-cli`.
 - SPEC-007 learning, generalization, presentation, and authorization-separation acceptance matrix in `drifti-core`.
 - SPEC-008 drift acceptance matrix in `drifti-core`.
 - Linux `drifti observe` orchestration through store and ptrace observer in `drifti-cli` (KAN-77).
