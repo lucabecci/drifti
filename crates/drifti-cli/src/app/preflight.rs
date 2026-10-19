@@ -5,6 +5,13 @@
 
 use drifti_observer_linux::{DoctorCheck, DoctorReport, DoctorStatus};
 
+/// Metadata persisted with a traced execution.
+#[derive(Debug, Clone, Default)]
+pub struct ObservationRunOptions {
+    /// Contract schema version when the run is a verify execution.
+    pub contract_version: Option<String>,
+}
+
 use super::AppError;
 
 /// Whether the Linux observer can attempt a traced launch on this host.

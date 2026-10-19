@@ -13,11 +13,11 @@ use drifti_core::diff::diff;
 use drifti_core::policy::{Coverage, RuleEffect};
 use drifti_core::presentation::{classify_presentation, PresentationThresholds};
 use drifti_core::resource::FilesystemRoots;
-use drifti_observer_linux::{DoctorCheck, DoctorReport, DoctorStatus};
+use drifti_observer_linux::DoctorReport;
 use drifti_store::{CoverageStatus, Store, STATE_DIR};
 
 use super::generate::proposal_document;
-use super::preflight::{ensure_observer_preflight, observer_launch_ready};
+use super::preflight::{ensure_observer_preflight, observer_launch_ready, ObservationRunOptions};
 use super::store_learning::learning_input_from_store;
 use super::{AppError, ApplicationServices, CommandContext, ProcessOutcome};
 use crate::result::{
@@ -252,11 +252,6 @@ mod linux {
     use super::*;
     use crate::app::verify::{apply_coverage_guard, evaluate_exercised};
     use crate::result::{CommandResult, ObserveResult, VerifyEvaluationView, VerifyResult};
-
-    #[derive(Debug, Clone, Default)]
-    pub(super) struct ObservationRunOptions {
-        pub contract_version: Option<String>,
-    }
 
     pub(super) fn observe_linux(
         ctx: &CommandContext,
