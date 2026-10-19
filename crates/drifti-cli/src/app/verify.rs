@@ -25,7 +25,10 @@ pub fn dedupe_capabilities(capabilities: Vec<Capability>) -> Vec<Capability> {
         .collect()
 }
 
-/// Evaluates each exercised capability. `UNKNOWN` alone is not a violation.
+/// Evaluates each exercised capability.
+///
+/// With [`Coverage::Complete`], exercised capabilities outside the contract
+/// ([`Decision::Unknown`]) fail verification (SPEC-010 AC-02).
 #[must_use]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn evaluate_exercised(
@@ -41,6 +44,7 @@ pub fn evaluate_exercised(
         match evaluation.decision() {
             Decision::Denied => denied = true,
             Decision::Indeterminate => indeterminate = true,
+            Decision::Unknown if coverage.is_complete() => denied = true,
             Decision::Allowed | Decision::Unknown => {}
         }
         evaluations.push((capability, evaluation));
@@ -83,9 +87,27 @@ mod tests {
     }
 
     #[test]
-    fn unknown_without_deny_is_not_violation() {
+    fn unknown_outside_contract_fails_when_coverage_complete() {
         let policy = CompiledPolicy::new(Vec::new());
         let summary = evaluate_exercised(&policy, [read("docs/readme.md")], Coverage::Complete);
+        assert!(summary.denied);
+        assert!(!summary.indeterminate);
+    }
+
+    #[test]
+    fn unknown_with_incomplete_coverage_is_not_violation() {
+        let policy = CompiledPolicy::new(Vec::new());
+        let summary = apply_coverage_guard(
+            evaluate_exercised(&policy, [read("docs/readme.md")], Coverage::Incomplete),
+            Coverage::Incomplete,
+        );
+        assert!(!summary.denied);
+        assert!(summary.indeterminate);
+    }
+
+    #[test]
+    fn allowed_capability_passes_when_coverage_complete() {
+        let summary = evaluate_exercised(&allow_all(), [read("src/lib.rs")], Coverage::Complete);
         assert!(!summary.denied);
         assert!(!summary.indeterminate);
     }
