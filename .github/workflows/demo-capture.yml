@@ -1,0 +1,28 @@
+name: Demo capture
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-evidence:
+    name: Linux CLI evidence (Remotion / web)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Capture transcripts
+        run: |
+          chmod +x scripts/demo-capture-linux.sh
+          scripts/demo-capture-linux.sh "${{ runner.temp }}/demo-captures"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@b507494408bd052e7867bae9b1c48d8d7d848dd # v4.6.0
+        with:
+          name: drifti-demo-captures
+          path: ${{ runner.temp }}/demo-captures/
+          retention-days: 30
+          if-no-files-found: error
