@@ -9,7 +9,7 @@
 #![cfg(target_os = "linux")]
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use drifti_cli::{
@@ -22,14 +22,25 @@ fn exclusive_tracer() -> MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn filesystem_tracee() -> &'static str {
-    static PATH: OnceLock<String> = OnceLock::new();
+fn filesystem_tracee() -> PathBuf {
+    static PATH: OnceLock<PathBuf> = OnceLock::new();
     PATH.get_or_init(|| {
-        std::env::var("CARGO_BIN_EXE_filesystem-tracee").expect(
-            "CARGO_BIN_EXE_filesystem-tracee (build drifti-observer-linux before CLI integration tests)",
-        )
+        if let Ok(path) = std::env::var("CARGO_BIN_EXE_filesystem-tracee") {
+            return PathBuf::from(path);
+        }
+        let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".into());
+        let target_dir = std::env::var("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target"));
+        let candidate = target_dir.join(profile).join("filesystem-tracee");
+        assert!(
+            candidate.is_file(),
+            "missing {} (run workspace tests so observer-linux fixtures build)",
+            candidate.display()
+        );
+        candidate
     })
-    .as_str()
+    .clone()
 }
 
 struct Workspace {
@@ -125,14 +136,8 @@ fn verify_denied_read_exits_121() {
     fs::create_dir_all(&payload).expect("payload dir");
     let file = payload.join("secret.txt");
     fs::write(&file, b"x").expect("payload file");
-    let code = workspace.run_verify([
-        "drifti",
-        "verify",
-        "--",
-        filesystem_tracee(),
-        "read",
-        &path_text(&file),
-    ]);
+    let tracee = path_text(&filesystem_tracee());
+    let code = workspace.run_verify(["drifti", "verify", "--", &tracee, "read", &path_text(&file)]);
     assert_eq!(code, i32::from(EXIT_VIOLATION));
 }
 
@@ -142,14 +147,8 @@ fn verify_incomplete_coverage_without_violation_exits_122() {
     workspace.write_contract(ALLOW_REPO_READS);
     let file = workspace.path().join("allowed.txt");
     fs::write(&file, b"ok").expect("allowed file");
-    let code = workspace.run_verify([
-        "drifti",
-        "verify",
-        "--",
-        filesystem_tracee(),
-        "read",
-        &path_text(&file),
-    ]);
+    let tracee = path_text(&filesystem_tracee());
+    let code = workspace.run_verify(["drifti", "verify", "--", &tracee, "read", &path_text(&file)]);
     assert_eq!(code, i32::from(EXIT_INCOMPLETE));
 }
 
@@ -167,14 +166,8 @@ fn verify_allowed_fixture_does_not_exit_violation() {
     workspace.write_contract(ALLOW_REPO_READS);
     let file = workspace.path().join("allowed.txt");
     fs::write(&file, b"ok").expect("allowed file");
-    let code = workspace.run_verify([
-        "drifti",
-        "verify",
-        "--",
-        filesystem_tracee(),
-        "read",
-        &path_text(&file),
-    ]);
+    let tracee = path_text(&filesystem_tracee());
+    let code = workspace.run_verify(["drifti", "verify", "--", &tracee, "read", &path_text(&file)]);
     assert_ne!(code, i32::from(EXIT_VIOLATION));
     assert_ne!(code, i32::from(EXIT_INVALID_CONTRACT));
 }
