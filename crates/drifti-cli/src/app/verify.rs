@@ -3,7 +3,7 @@
 
 //! Thin verify orchestration over compiled policy.
 
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 
 use drifti_core::capability::Capability;
 use drifti_core::policy::{CompiledPolicy, Coverage, Decision, Evaluation};
@@ -18,7 +18,7 @@ pub struct VerifySummary {
 /// Keeps the first occurrence of each canonical capability (SPEC-010 deduplication).
 #[must_use]
 pub fn dedupe_capabilities(capabilities: Vec<Capability>) -> Vec<Capability> {
-    let mut seen = BTreeSet::new();
+    let mut seen = HashSet::new();
     capabilities
         .into_iter()
         .filter(|capability| seen.insert(capability.clone()))
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn dedupe_preserves_first_capability_occurrence() {
         let cap = read("src/lib.rs");
-        let deduped = dedupe_capabilities(vec![cap.clone(), cap]);
+        let deduped = dedupe_capabilities(vec![cap.clone(), cap.clone()]);
         assert_eq!(deduped.len(), 1);
         assert_eq!(deduped[0], cap);
     }
