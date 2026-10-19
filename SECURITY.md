@@ -1,6 +1,6 @@
 # Security policy
 
-Drifti does not have a published release yet. Reports are still welcome.
+Drifti v0.1 is available as **source builds** on Linux; there is no signed or versioned binary release channel yet. Reports are welcome.
 
 ## Reporting a vulnerability
 
@@ -12,7 +12,7 @@ Once the repository is on GitHub, you can also use private vulnerability reporti
 
 ## Supported versions
 
-No version is supported yet. `drifti-core` exists, and there is no release.
+**Supported for security reports:** `main` and the latest v0.1 source tag when published. Pre-release builds from `main` are best-effort; prefer reporting against a commit SHA you run in production.
 
 ## Observation data
 
