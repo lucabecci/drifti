@@ -10,6 +10,16 @@ Drifti v0.1 targets **Linux x86_64** (and other Linux targets the workspace buil
 
 Drifti is **not** a sandbox. It records semantic capability evidence and compares runs to a human-reviewed contract.
 
+## Prebuilt binary (GitHub Releases)
+
+Tagged releases publish a **Linux x86_64** tarball (`drifti-<version>-x86_64-unknown-linux-gnu.tar.gz`) and `SHA256SUMS`. See [Releases](https://github.com/lucabecci/drifti/releases). v0.1 tags are marked **pre-release** (early adopters).
+
+```sh
+tar -xzf drifti-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+cd drifti-0.1.0-x86_64-unknown-linux-gnu
+./drifti doctor
+```
+
 ## Build from source
 
 ```sh
@@ -55,7 +65,7 @@ State and traces live under **`.drifti/`** (gitignored). The contract file is **
 
 - Linux ptrace observation often reports **incomplete coverage**. Verify may return **122** even when no explicit violation was seen. That is intentional: Drifti must not claim success without sufficient evidence.
 - Policy is deterministic; contracts are **proposals** until you review and trust `drifti.yaml`.
-- No prebuilt release artifacts in this repository yet; build from source or your own CI pipeline.
+- Prebuilt Linux x86_64 tarballs appear on GitHub Releases when a `v*` tag is pushed; other platforms build from source.
 
 ## Tests
 
