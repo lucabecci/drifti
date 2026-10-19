@@ -250,7 +250,7 @@ mod linux {
     };
 
     use super::*;
-    use crate::app::verify::{apply_coverage_guard, evaluate_exercised};
+    use crate::app::verify::{apply_coverage_guard, dedupe_capabilities, evaluate_exercised};
     use crate::result::{CommandResult, ObserveResult, VerifyEvaluationView, VerifyResult};
 
     pub(super) fn observe_linux(
@@ -367,10 +367,10 @@ mod linux {
             .execution_history(&ExecutionId::parse(&observe.execution_id).map_err(store_error)?)
             .map_err(store_error)?;
         let roots = workspace_roots(&ctx.cwd)?;
-        let capabilities = exercised_capabilities_from_events(
+        let capabilities = dedupe_capabilities(exercised_capabilities_from_events(
             history.events().iter().cloned().filter_map(map_store_event),
             &roots,
-        );
+        ));
         let coverage = map_policy_coverage(history.execution().coverage());
         let summary = apply_coverage_guard(
             evaluate_exercised(&policy, capabilities, coverage),
