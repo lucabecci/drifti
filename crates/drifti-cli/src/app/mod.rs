@@ -4,6 +4,7 @@
 mod error;
 mod generate;
 mod mvp;
+mod preflight;
 mod service;
 mod store_learning;
 mod stub;

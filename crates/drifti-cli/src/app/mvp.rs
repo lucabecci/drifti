@@ -13,10 +13,11 @@ use drifti_core::diff::diff;
 use drifti_core::policy::{Coverage, RuleEffect};
 use drifti_core::presentation::{classify_presentation, PresentationThresholds};
 use drifti_core::resource::FilesystemRoots;
-use drifti_observer_linux::{DoctorCheck, DoctorReport, DoctorStatus};
+use drifti_observer_linux::DoctorReport;
 use drifti_store::{CoverageStatus, Store, STATE_DIR};
 
 use super::generate::proposal_document;
+use super::preflight::{ensure_observer_preflight, observer_launch_ready, ObservationRunOptions};
 use super::store_learning::learning_input_from_store;
 use super::{AppError, ApplicationServices, CommandContext, ProcessOutcome};
 use crate::result::{
@@ -55,7 +56,7 @@ impl ApplicationServices for MvpApplicationServices {
         }
         #[cfg(target_os = "linux")]
         {
-            observe_linux(ctx, command)
+            observe_linux(ctx, command, ObservationRunOptions::default())
         }
     }
 
@@ -125,6 +126,7 @@ impl ApplicationServices for MvpApplicationServices {
             message: format!("drifti.yaml is not a valid capability contract: {error}"),
         })?;
         let contract = AcceptedContract::loaded(document);
+        let contract_version = contract.document().version().get().to_string();
         let policy = contract
             .compile()
             .map_err(|error| AppError::InvalidContract {
@@ -133,7 +135,7 @@ impl ApplicationServices for MvpApplicationServices {
 
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (command, policy);
+            let _ = (command, policy, contract_version);
             return Err(AppError::User {
                 message: "observation requires Linux".to_owned(),
             });
@@ -141,7 +143,7 @@ impl ApplicationServices for MvpApplicationServices {
 
         #[cfg(target_os = "linux")]
         {
-            verify_linux(ctx, command, policy)
+            verify_linux(ctx, command, policy, contract_version)
         }
     }
 
@@ -198,21 +200,7 @@ impl ApplicationServices for MvpApplicationServices {
                 explanation: finding.explanation.clone(),
             })
             .collect();
-        let observer_ready = report.findings().iter().all(|finding| {
-            matches!(
-                (finding.check, finding.status),
-                (DoctorCheck::Kernel, DoctorStatus::Available)
-                    | (DoctorCheck::Proc, DoctorStatus::Available)
-                    | (DoctorCheck::Ptrace, DoctorStatus::Available)
-                    | (
-                        DoctorCheck::Yama,
-                        DoctorStatus::Available | DoctorStatus::Restricted
-                    )
-                    | (DoctorCheck::Yama, DoctorStatus::Unknown)
-            ) || finding.status == DoctorStatus::Restricted
-        }) && report.findings().iter().any(|finding| {
-            finding.check == DoctorCheck::Ptrace && finding.status == DoctorStatus::Available
-        });
+        let observer_ready = observer_launch_ready(&report);
         let store_open = Store::open(&ctx.cwd).is_ok();
         let contract_present = contract_path(&ctx.cwd).is_file();
         let contract_valid = if contract_present {
@@ -268,7 +256,9 @@ mod linux {
     pub(super) fn observe_linux(
         ctx: &CommandContext,
         command: &[String],
+        options: ObservationRunOptions,
     ) -> Result<ProcessOutcome, AppError> {
+        ensure_observer_preflight()?;
         let mut store = Store::open(&ctx.cwd).map_err(store_error)?;
         let program = command.first().ok_or_else(|| AppError::User {
             message: "observe requires a command after `--`".to_owned(),
@@ -322,7 +312,7 @@ mod linux {
             coverage,
             unsupported,
             execution.exit_code(),
-            None,
+            options.contract_version.as_deref(),
             Some(env!("CARGO_PKG_VERSION")),
         )
         .map_err(|error| AppError::Internal {
@@ -358,8 +348,15 @@ mod linux {
         ctx: &CommandContext,
         command: &[String],
         policy: CompiledPolicy,
+        contract_version: String,
     ) -> Result<ProcessOutcome, AppError> {
-        let outcome = observe_linux(ctx, command)?;
+        let outcome = observe_linux(
+            ctx,
+            command,
+            ObservationRunOptions {
+                contract_version: Some(contract_version),
+            },
+        )?;
         let CommandResult::Observe(observe) = outcome.result else {
             return Err(AppError::Internal {
                 message: "verify expected observe result".to_owned(),
