@@ -8,9 +8,15 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-19
+
+First **pre-release** for Linux early adopters: observe, learn, generate, verify, and drift diff with local SQLite evidence.
+
 ### Added
 
-- Linux quick start and install notes in [docs/linux/README.md](docs/linux/README.md).
+- GitHub Actions release workflow: Linux x86_64 tarball and `SHA256SUMS` on `v*` tag push.
+- Launch copy under [docs/launch/v0.1/](docs/launch/v0.1/) (release notes, HN, community, social, long-form outline).
+- Linux quick start and install notes in [docs/linux/README.md](docs/linux/README.md), including GitHub Releases download path.
 - SPEC-010 verify pipeline (preflight, dedupe, e2e acceptance tests) in `drifti-cli`.
 - SPEC-009 CLI commands, exit codes, and text/JSON output in `drifti-cli`.
 - SPEC-007 learning, generalization, presentation, and authorization-separation acceptance matrix in `drifti-core`.
