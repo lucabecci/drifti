@@ -15,8 +15,12 @@ use drifti_cli::output::{ColorPolicy, OutputConfig, OutputFormat};
 use drifti_cli::render::render_result;
 use std::num::NonZeroUsize;
 
-use drifti_cli::result::{CommandResult, InitResult, ResultStatus, VerifyResult};
+use drifti_cli::result::{
+    CommandResult, InitResult, ResultStatus, VerifyEvaluationView, VerifyResult,
+};
 use drifti_cli::{run_with_services, EXIT_USAGE};
+use drifti_core::capability::Capability;
+use drifti_core::resource::{FileResource, FilesystemAnchor};
 use drifti_observer::{
     EvidenceMeta, MonotonicTimestamp, ObservedEvent, ObservedResource, Operation, Outcome,
     ParentIdentity, ProcessIdentity,
@@ -148,6 +152,38 @@ fn verify_invalid_contract_exits_123() {
         ["drifti", "verify", "--", "/bin/true"],
     );
     assert_eq!(code, i32::from(EXIT_INVALID_CONTRACT));
+}
+
+#[test]
+fn verify_text_and_json_share_status() {
+    let capability = Capability::filesystem_read(
+        FileResource::new(FilesystemAnchor::Repo, "src/main.rs").expect("file"),
+    );
+    let result = CommandResult::Verify(VerifyResult {
+        status: ResultStatus::Incomplete,
+        coverage: "incomplete".to_owned(),
+        child_exit: Some(0),
+        evaluations: vec![VerifyEvaluationView {
+            decision: "INDETERMINATE".to_owned(),
+            capability: Some(capability),
+        }],
+    });
+    let text_output = OutputConfig::new(OutputFormat::Text, false, false, ColorPolicy::Never);
+    let json_output = OutputConfig::new(OutputFormat::Json, false, false, ColorPolicy::Never);
+    let text = render_to_string(|stdout| {
+        render_result(&result, &text_output, stdout).expect("text render");
+    });
+    let json = render_to_string(|stdout| {
+        render_result(&result, &json_output, stdout).expect("json render");
+    });
+    assert!(text.contains("status: incomplete"));
+    assert!(text.contains("coverage: incomplete"));
+    assert_eq!(text.matches("INDETERMINATE").count(), 1);
+    let parsed: serde_json::Value = serde_json::from_str(json.trim()).expect("json verify");
+    assert_eq!(parsed["command"], "verify");
+    assert_eq!(parsed["status"], "incomplete");
+    assert_eq!(parsed["coverage"], "incomplete");
+    assert_eq!(parsed["evaluations"].as_array().map(|a| a.len()), Some(1));
 }
 
 #[test]

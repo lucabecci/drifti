@@ -156,4 +156,17 @@ mod tests {
         assert_eq!(deduped.len(), 1);
         assert_eq!(deduped[0], cap);
     }
+
+    #[test]
+    fn dedupe_before_evaluate_emits_one_evaluation_per_capability() {
+        let policy = CompiledPolicy::new(vec![Rule::deny(
+            RuleId::new("deny-src").expect("id"),
+            read("src/**"),
+        )]);
+        let cap = read("src/lib.rs");
+        let deduped = dedupe_capabilities(vec![cap.clone(), cap]);
+        let summary = evaluate_exercised(&policy, deduped, Coverage::Complete);
+        assert_eq!(summary.evaluations.len(), 1);
+        assert!(summary.denied);
+    }
 }
