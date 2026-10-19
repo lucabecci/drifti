@@ -10,7 +10,7 @@
 
 use std::fs;
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use drifti_cli::{
     run_with_services, MvpApplicationServices, EXIT_INCOMPLETE, EXIT_INVALID_CONTRACT,
@@ -23,7 +23,13 @@ fn exclusive_tracer() -> MutexGuard<'static, ()> {
 }
 
 fn filesystem_tracee() -> &'static str {
-    env!("CARGO_BIN_EXE_filesystem-tracee")
+    static PATH: OnceLock<String> = OnceLock::new();
+    PATH.get_or_init(|| {
+        std::env::var("CARGO_BIN_EXE_filesystem-tracee").expect(
+            "CARGO_BIN_EXE_filesystem-tracee (build drifti-observer-linux before CLI integration tests)",
+        )
+    })
+    .as_str()
 }
 
 struct Workspace {
